@@ -10,6 +10,12 @@ const LAST_CHANGE_LIFE_SPAN = 20;
 var gpa = std.heap.GeneralPurposeAllocator(.{}).init;
 const allocator = gpa.allocator();
 
+const ProcQueue = struct {
+    head: u8,
+    tail: u8,
+    arr: [256]u32,
+};
+
 const Display = struct {
     /// The display number in the system.
     display_number: u32,
@@ -126,11 +132,61 @@ const Display = struct {
 pub fn main() !void {
     std.debug.print("Hello world\n", .{});
 
-    var display = try Display.init(2);
-    std.debug.print("Display Brightness: {d}\n", .{display.brigtness});
-    std.debug.print("Display Max Brightness: {d}\n", .{display.max_brightness});
+    // var display = try Display.init(2);
+    // std.debug.print("Display Brightness: {d}\n", .{display.brigtness});
+    // std.debug.print("Display Max Brightness: {d}\n", .{display.max_brightness});
+    //
+    // try display.setBrightness(50);
+    // std.debug.print("Display Brightness: {d}\n", .{display.brigtness});
+    // std.debug.print("Display Max Brightness: {d}\n", .{display.max_brightness});
 
-    try display.setBrightness(50);
-    std.debug.print("Display Brightness: {d}\n", .{display.brigtness});
-    std.debug.print("Display Max Brightness: {d}\n", .{display.max_brightness});
+    // Attempt to create new shared memory.
+    var fd = std.c.shm_open("/display-brightness-tool-queue", @bitCast(std.c.O{ .CREAT = true, .EXCL = true, .ACCMODE = .RDWR }), 0o666);
+
+    // If the shared memory failed to open because it already exists, simply
+    // open the already existing memory.
+    if (fd == -1) {
+        const err_no: u32 = @bitCast(std.c._errno().*);
+        const err: std.posix.E = @enumFromInt(err_no);
+        switch (err) {
+            .EXIST => {
+                fd = std.c.shm_open("/display-brightness-tool-queue", @bitCast(std.c.O{ .ACCMODE = .RDWR }), 0o666);
+            },
+            else => return std.posix.unexpectedErrno(err),
+        }
+    }
+
+    // If the creation of new shared memory did not fail, truncate to the
+    // appropriate length.
+    else {
+        // QUEUE-HEAD: u8 -> 1 Byte
+        // QUEUE-TAIL: u8 -> 1 Byte
+        // QUEUE-SIZE: u32 * 256 -> 1024 Bytes
+        // Total: 1026 Bytes
+        try std.posix.ftruncate(fd, @intCast(@sizeOf(ProcQueue)));
+    }
+
+    const queue_ptr = try std.posix.mmap(null, @intCast(@sizeOf(ProcQueue)), std.posix.PROT.READ | std.posix.PROT.WRITE, .{ .TYPE = .SHARED }, fd, 0);
+    defer std.posix.munmap(@alignCast(queue_ptr));
+
+    const self_pid = std.c.getpid();
+
+    std.debug.print("{d} -> Headval: {d}\n", .{ self_pid, queue_ptr[0] });
+    std.debug.print("{d} -> Tailval: {d}\n", .{ self_pid, queue_ptr[1] });
+
+    std.posix.nanosleep(4, 0);
+
+    queue_ptr[0] += 1;
+    queue_ptr[1] += 2;
+
+    std.debug.print("{d} -> Headval: {d}\n", .{ self_pid, queue_ptr[0] });
+    std.debug.print("{d} -> Tailval: {d}\n", .{ self_pid, queue_ptr[1] });
+
+    std.posix.nanosleep(5, 0);
+
+    std.debug.print("{d} -> Headval: {d}\n", .{ self_pid, queue_ptr[0] });
+    std.debug.print("{d} -> Tailval: {d}\n", .{ self_pid, queue_ptr[1] });
+
+    // std.posix.nanosleep(20, 0);
+    _ = std.c.shm_unlink("/display-brightness-tool-queue");
 }
