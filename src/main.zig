@@ -6,110 +6,13 @@ const std = @import("std");
 
 const Semaphore = std.Thread.Semaphore;
 const CheckingSemaphore = @import("CheckingSemaphore.zig");
+const ProcQueue = @import("ProcQueue.zig");
 
 const BRIGHNESS_VCP_CODE = 10;
 const LAST_CHANGE_LIFE_SPAN = 20;
 
 var gpa = std.heap.GeneralPurposeAllocator(.{}).init;
 const allocator = gpa.allocator();
-
-const ProcQueue = struct {
-    head: u8 = 0,
-    tail: u8 = 0,
-    count: u8 = 0,
-    queue_sem: CheckingSemaphore = CheckingSemaphore.init(1, 30_000_000),
-    cs_sem: CheckingSemaphore = CheckingSemaphore.init(1, 30_000_000),
-    arr: [std.math.maxInt(u8) + 1]std.c.pid_t = [_]std.c.pid_t{-1} ** (std.math.maxInt(u8) + 1),
-
-    const Self = @This();
-
-    pub fn join(self: *Self) void {
-        var waiting = true;
-        while (waiting) {
-            self.queue_sem.wait();
-            // Join the queue if there is room, otherwise keep waiting.
-            if (self.count < std.math.maxInt(u8)) {
-                self.arr[self.tail] = std.c.getpid();
-                self.tail +%= 1;
-                self.count +|= 1;
-                waiting = false;
-            }
-            self.queue_sem.post();
-            if (waiting) {
-                std.Thread.sleep(1_000_000);
-            }
-        }
-    }
-
-    pub fn wait(self: *Self) void {
-        self.join();
-
-        var waiting = true;
-        while (waiting) {
-            self.queue_sem.wait();
-            if (self.arr[self.head] == std.c.getpid()) {
-                waiting = false;
-                // self.arr[self.head] = -1;
-                // self.head +%= 1;
-                // self.count -|= 1;
-                // return true;
-            }
-            self.queue_sem.post();
-
-            if (waiting) {
-                std.Thread.sleep(1_000_000);
-            }
-        }
-
-        self.cs_sem.wait();
-
-        // // Wait to acquire the semaphore.
-        // var waiting = true;
-        // while (waiting) {
-        //     // If we acquire the semaphore without timing out, check if we are
-        //     // at the head of the queue.
-        //     if (self.cs_sem.timedWait(200_000_000)) |_| {
-        //         defer self.queue_sem.post();
-        //         // Return false if we are waiting in an empty queue that we are
-        //         // also not even in.
-        //         if (self.count == 0) {
-        //             waiting = false;
-        //             return true;
-        //         }
-        //
-        //         // If we are at the head of the queue, then remove ourselves
-        //         // and return.
-        //         else if (self.arr[self.head] == std.c.getpid()) {
-        //             waiting = false;
-        //             self.arr[self.head] = -1;
-        //             self.head +%= 1;
-        //             self.count -|= 1;
-        //             return true;
-        //         }
-        //
-        //         self.sem.post();
-        //     }
-        //     // If we timed out waiting for the semaphore, try again.
-        //     else |_| {}
-        // }
-        //
-        // return true;
-    }
-
-    pub fn signal(self: *Self) void {
-        // Remove self from the head of the queue.
-        self.queue_sem.wait();
-        if (self.arr[self.head] == std.c.getpid()) {
-            self.arr[self.head] = -1;
-            self.head +%= 1;
-            self.count -|= 1;
-        }
-        self.queue_sem.post();
-
-        // Release the critical section semaphore.
-        self.cs_sem.post();
-    }
-};
 
 const Display = struct {
     /// The display number in the system.
