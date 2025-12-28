@@ -1,7 +1,8 @@
 const std = @import("std");
 
 pub fn build(b: *std.Build) void {
-    const optimize = b.standardOptimizeOption(.{});
+    // const optimize = b.standardOptimizeOption(.{});
+    const optimize = .ReleaseSafe;
     const exe = b.addExecutable(.{
         .name = "display-brightness-tool",
         .root_module = b.createModule(.{
