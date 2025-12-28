@@ -5,6 +5,7 @@ const std = @import("std");
 // });
 
 const Semaphore = std.Thread.Semaphore;
+const CheckingSemaphore = @import("CheckingSemaphore.zig");
 
 const BRIGHNESS_VCP_CODE = 10;
 const LAST_CHANGE_LIFE_SPAN = 20;
@@ -12,37 +13,12 @@ const LAST_CHANGE_LIFE_SPAN = 20;
 var gpa = std.heap.GeneralPurposeAllocator(.{}).init;
 const allocator = gpa.allocator();
 
-const CheckingSemaphore = struct {
-    check_timeout: u64 = 30_000_000,
-    sem: Semaphore = .{ .permits = 1 },
-
-    const Self = @This();
-
-    pub fn post(self: *Self) void {
-        self.sem.post();
-    }
-
-    pub fn wait(self: *Self) void {
-        var waiting = true;
-        while (waiting) {
-            // If we acquire the semaphore, then add this processes id to the
-            // queue.
-            // Acquire the semaphore, timing out to check again cyclically.
-            if (self.sem.timedWait(self.check_timeout)) |_| {
-                waiting = false;
-            }
-            // If we timed out waiting for the semaphore, try again.
-            else |_| {}
-        }
-    }
-};
-
 const ProcQueue = struct {
     head: u8 = 0,
     tail: u8 = 0,
     count: u8 = 0,
-    queue_sem: CheckingSemaphore = CheckingSemaphore{},
-    cs_sem: CheckingSemaphore = CheckingSemaphore{},
+    queue_sem: CheckingSemaphore = CheckingSemaphore.init(1, 30_000_000),
+    cs_sem: CheckingSemaphore = CheckingSemaphore.init(1, 30_000_000),
     arr: [std.math.maxInt(u8) + 1]std.c.pid_t = [_]std.c.pid_t{-1} ** (std.math.maxInt(u8) + 1),
 
     const Self = @This();
