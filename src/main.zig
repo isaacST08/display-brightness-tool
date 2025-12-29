@@ -1,8 +1,10 @@
 const std = @import("std");
 const shared_memory = @import("shared_memory.zig");
+const display = @import("Display.zig");
 
 const CheckingSemaphore = @import("CheckingSemaphore.zig");
-const Display = @import("Display.zig");
+const Display = display.Display;
+const MemoryDisplay = display.MemoryDisplay;
 const ProcQueue = @import("ProcQueue.zig");
 const Semaphore = std.Thread.Semaphore;
 const SharedMemoryObject = shared_memory.SharedMemoryObject;
@@ -14,8 +16,11 @@ pub fn main() !u8 {
 
     // #######################################################
 
+    var shm_display = try MemoryDisplay.init(1);
+    defer shm_display.deinit();
+
     // Get/Create the shared memory queue.
-    const shm_queue = try SharedMemoryObject(ProcQueue).init("/display-brightness-tool-queue", true);
+    const shm_queue = try SharedMemoryObject(ProcQueue).init("/display-brightness-tool-queue", false);
     defer shm_queue.deinit();
     if (shm_queue.created_new) {
         shm_queue.obj_ptr.* = ProcQueue{};
