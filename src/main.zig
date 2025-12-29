@@ -1,6 +1,6 @@
 const std = @import("std");
 const shared_memory = @import("shared_memory.zig");
-const display = @import("Display.zig");
+const display = @import("display.zig");
 
 const CheckingSemaphore = @import("CheckingSemaphore.zig");
 const Display = display.Display;
