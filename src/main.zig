@@ -20,7 +20,7 @@ pub fn main() !u8 {
     defer shm_display.deinit();
 
     // Get/Create the shared memory queue.
-    const shm_queue = try SharedMemoryObject(ProcQueue).init("/display-brightness-tool-queue", false);
+    const shm_queue = try SharedMemoryObject(ProcQueue).init(shared_memory.SHARED_MEMORY_PATH_PREFIX ++ "queue", false);
     defer shm_queue.deinit();
     if (shm_queue.created_new) {
         shm_queue.obj_ptr.* = ProcQueue{};

@@ -152,7 +152,7 @@ pub const MemoryDisplay = struct {
     display_number: DisplayNumber,
     shm_display: SharedMemoryObject(Display),
 
-    const SHM_DISPLAY_PATH_PREFIX: []const u8 = "/display-brightness-tool-display-";
+    const SHM_DISPLAY_PATH_PREFIX: []const u8 = shared_memory.SHARED_MEMORY_PATH_PREFIX ++ "display-";
     const SHM_DISPLAY_NUM_STR_MAX_LEN: usize = intDisplayLen(DisplayNumber);
     const SHM_DISPLAY_PATH_LEN: usize = (SHM_DISPLAY_PATH_PREFIX.len + SHM_DISPLAY_NUM_STR_MAX_LEN + 1);
 

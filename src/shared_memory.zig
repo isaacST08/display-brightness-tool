@@ -1,5 +1,7 @@
 const std = @import("std");
 
+pub const SHARED_MEMORY_PATH_PREFIX: []const u8 = "/display-brightness-tool-";
+
 const SharedMemoryPath = struct {
     buf: [std.c.NAME_MAX + 1]u8 = .{0} ** (std.c.NAME_MAX + 1),
     len: u8,
