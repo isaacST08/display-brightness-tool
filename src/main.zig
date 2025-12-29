@@ -6,11 +6,13 @@ const Display = @import("Display.zig");
 const ProcQueue = @import("ProcQueue.zig");
 const Semaphore = std.Thread.Semaphore;
 const SharedMemoryObject = shared_memory.SharedMemoryObject;
+const cli_args = @import("cli_args.zig");
 
-var gpa = std.heap.GeneralPurposeAllocator(.{}).init;
-const allocator = gpa.allocator();
+pub fn main() !u8 {
+    const options = cli_args.parseArgs();
+    defer options.deinit();
 
-pub fn main() !void {
+    // #######################################################
 
     // Get/Create the shared memory queue.
     const shm_queue = try SharedMemoryObject(ProcQueue).init("/display-brightness-tool-queue", true);
@@ -32,4 +34,6 @@ pub fn main() !void {
 
     queue_ptr.signal();
     std.debug.print("Pid {d} done.\n", .{self_pid});
+
+    return 0;
 }
