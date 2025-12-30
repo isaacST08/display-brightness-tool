@@ -1,6 +1,8 @@
 const std = @import("std");
 const argsParser = @import("args");
 
+const DisplayNumber = @import("display.zig").DisplayNumber;
+
 const EXE_NAME: []const u8 = "displayctl";
 
 // **=======================================**
@@ -8,9 +10,9 @@ const EXE_NAME: []const u8 = "displayctl";
 // **=======================================**
 
 const Options = struct {
-    action: ?enum { set, increase, decrease, save, recover } = null,
-    value: ?i8 = null,
-    @"display-number": ?u32 = null,
+    action: ?enum { set, increase, decrease, save, restore } = null,
+    value: ?i32 = null,
+    @"display-number": ?DisplayNumber = null,
     @"display-bus": ?u32 = null,
     @"display-set": ?enum { oled, all } = null,
     @"clear-queue": bool = false,
@@ -34,7 +36,7 @@ const Options = struct {
             .@"display-bus" = "Perform the action only on the display at this I2C bus.",
             .@"display-number" = "Perform the action only on the display identified by this number.",
             .@"display-set" = "Perform the action on this set of displays.",
-            .action = "The action to perform on the display(s). [set, increase, decrease, save, recover]",
+            .action = "The action to perform on the display(s). [set, increase, decrease, save, restore]",
             .help = "help help",
             .value = "The value to provide to the action. Only has an effect on the `set`, `increase`, and `decrease` actions.",
             .verbose = "Print additional runtime info.",
