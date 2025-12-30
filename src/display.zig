@@ -11,7 +11,21 @@ const log10 = std.math.log10;
 pub const DisplayNumber = u16;
 pub const I2CBusNumber = u10;
 
-const allocator = std.heap.c_allocator;
+pub const DisplayTag = union((enum { set, number })) {
+    set: enum { all, oled },
+    number: DisplayNumber,
+
+    pub fn parse(x: []const u8) !@This() {
+        return if (std.mem.eql(u8, x, "all"))
+            .{ .set = .all }
+        else if (std.mem.eql(u8, x, "oled"))
+            .{ .set = .oled }
+        else if (std.fmt.parseInt(DisplayNumber, x, 10)) |num|
+            .{ .number = num }
+        else |err|
+            err;
+    }
+};
 
 pub const DisplayInfo = struct {
     i2c_bus: ?I2CBusNumber = null,
@@ -42,6 +56,8 @@ pub const Display = struct {
 
     const BRIGHNESS_VCP_CODE = 10;
     const LAST_CHANGE_LIFE_SPAN = 20;
+
+    const allocator = std.heap.c_allocator;
 
     pub fn init(display_number: DisplayNumber) !Display {
         var self = Display{
@@ -350,6 +366,82 @@ pub const MemoryDisplay = struct {
         self.shm_display.deinit();
     }
 };
+
+pub fn getDisplayNumbers(tag: DisplayTag, allocator: Allocator) ![]DisplayNumber {
+    switch (tag) {
+        .number => {
+            const display_numbers = try allocator.alloc(DisplayNumber, 1);
+            display_numbers[0] = tag.number;
+            return display_numbers;
+        },
+        .set => switch (tag.set) {
+            .all => {
+                const display_count = try SharedMemoryObject(DisplayNumber).init(shared_memory.SHARED_MEMORY_PATH_PREFIX ++ "display-count", true);
+                if (display_count.created_new) {
+                    // ----- CHILD PROCESS -----
+
+                    // Create array lists to record stdout and stderr from the child
+                    // process.
+                    var child_stdout = try std.ArrayList(u8).initCapacity(allocator, 512);
+                    defer child_stdout.deinit(allocator);
+                    var child_stderr = try std.ArrayList(u8).initCapacity(allocator, 8);
+                    defer child_stderr.deinit(allocator);
+
+                    // Args to detect displays.
+                    const argv = [_][]const u8{ "ddcutil", "detect", "--brief" };
+
+                    // Set up the child process.
+                    var child = std.process.Child.init(&argv, allocator);
+
+                    // Collect child output.
+                    child.stdout_behavior = .Pipe; // Record stdout
+                    child.stderr_behavior = .Pipe; // Ignore stderr
+
+                    // Exec the child.
+                    try child.spawn();
+                    try child.collectOutput(allocator, &child_stdout, &child_stderr, 16384);
+
+                    // Wait for the child to complete.
+                    _ = try child.wait();
+
+                    // ----- PARSE RESULT -----
+
+                    // Count the number of displays detected.
+                    display_count.obj_ptr.* = @intCast(std.mem.count(u8, child_stdout.items, "Display "));
+                }
+
+                var display_numbers = try allocator.alloc(DisplayNumber, display_count.obj_ptr.*);
+                for (0..display_count.obj_ptr.*) |i| {
+                    display_numbers[i] = @intCast(i + 1);
+                }
+
+                return display_numbers;
+            },
+            .oled => {
+                // Start with the list of all displays.
+                var all_displays = try getDisplayNumbers(.{ .set = .all }, allocator);
+                defer allocator.free(all_displays);
+
+                var oled_index: usize = 0;
+                for (all_displays) |d| {
+                    var shm_display = try MemoryDisplay.init(d);
+                    defer shm_display.deinit();
+
+                    const lower_monitor_name = try std.ascii.allocLowerString(allocator, &shm_display.shm_display.obj_ptr.display_info.monitor);
+                    defer allocator.free(lower_monitor_name);
+
+                    if (std.mem.containsAtLeast(u8, lower_monitor_name, 1, "oled")) {
+                        all_displays[oled_index] = d;
+                        oled_index += 1;
+                    }
+                }
+
+                // Resize the displays list to only contain the OLED displays.
+                return try allocator.dupe(DisplayNumber, all_displays[0..oled_index]);
+            },
+        },
+    }
+}
 
 // **=======================================**
 // ||          <<<<< HELPERS >>>>>          ||

@@ -1,7 +1,9 @@
 const std = @import("std");
 const argsParser = @import("args");
+const display = @import("display.zig");
 
-const DisplayNumber = @import("display.zig").DisplayNumber;
+const DisplayNumber = display.DisplayNumber;
+const DisplayTag = display.DisplayTag;
 
 const EXE_NAME: []const u8 = "displayctl";
 
@@ -12,9 +14,7 @@ const EXE_NAME: []const u8 = "displayctl";
 const Options = struct {
     action: ?enum { set, increase, decrease, save, restore } = null,
     value: ?i32 = null,
-    @"display-number": ?DisplayNumber = null,
-    @"display-bus": ?u32 = null,
-    @"display-set": ?enum { oled, all } = null,
+    display: DisplayTag = .{ .set = .all },
     @"clear-queue": bool = false,
     verbose: bool = false,
     help: bool = false,
@@ -22,20 +22,16 @@ const Options = struct {
     pub const shorthands = .{
         .V = "verbose",
         .a = "action",
-        .b = "display-bus",
         .c = "clear-queue",
+        .d = "display",
         .h = "help",
-        .n = "display-number",
-        .s = "display-set",
         .v = "value",
     };
 
     pub const meta = .{
         .option_docs = .{
             .@"clear-queue" = "Clear the action queue.",
-            .@"display-bus" = "Perform the action only on the display at this I2C bus.",
-            .@"display-number" = "Perform the action only on the display identified by this number.",
-            .@"display-set" = "Perform the action on this set of displays.",
+            .display = "Perform the action on this display or set of displays. Can either be one of [all, oled] for that set of displays, or a display number. Default = all.",
             .action = "The action to perform on the display(s). [set, increase, decrease, save, restore]",
             .help = "help help",
             .value = "The value to provide to the action. Only has an effect on the `set`, `increase`, and `decrease` actions.",
