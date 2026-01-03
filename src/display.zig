@@ -1,6 +1,7 @@
 const std = @import("std");
 const shared_memory = @import("shared_memory.zig");
 const lib = @import("lib.zig");
+const QueueingSemaphore = @import("QueueingSemaphore.zig");
 
 const enums = std.enums;
 const fmt = std.fmt;
@@ -75,6 +76,9 @@ pub const Display = struct {
     /// A saved brightness value that can be restored to later.
     saved_brightness: u32 = 0,
 
+    /// Semaphore to protect access to the display.
+    sem: QueueingSemaphore,
+
     const BRIGHNESS_VCP_CODE = 10;
     const LAST_CHANGE_LIFE_SPAN = 20;
 
@@ -83,6 +87,7 @@ pub const Display = struct {
     pub fn init(display_number: DisplayNumber, display_detect_info: ?[]const u8) !Display {
         var self = Display{
             .display_number = display_number,
+            .sem = try .init(1),
         };
         try self.updateInfo(display_detect_info);
         try self.updateBrightness();
@@ -124,16 +129,16 @@ pub const Display = struct {
             // Display number or I2C bus.
             ++ ddcutilCommArgs(self, &display_comm_buf);
 
-        // std.debug.print("ddcutil Args:", .{});
-        // for (argv) |arg| {
-        //     std.debug.print(" {s}", .{arg});
-        // }
-        // std.debug.print("\n", .{});
+        // Acquire display lock.
+        try self.sem.wait();
 
         // Execute the process.
         var child = std.process.Child.init(&argv, allocator);
         try child.spawn();
         _ = try child.wait();
+
+        // Release display lock.
+        self.sem.post();
 
         // Update the brightness of this display object.
         // Assumes the brightness of the physical display was set successfully.
@@ -197,6 +202,10 @@ pub const Display = struct {
         // Collect child output.
         child.stdout_behavior = .Pipe; // Record stdout
         child.stderr_behavior = .Pipe; // Ignore stderr
+
+        // Acquire display lock.
+        try self.sem.wait();
+        defer self.sem.post();
 
         // Exec the child.
         try child.spawn();
@@ -375,6 +384,10 @@ pub const Display = struct {
     /// The output string from running the getvcp command.
     fn getvcp(self: *Display, vcp_code: []const u8, extra_argv: anytype, max_output_bytes: usize) ![]const u8 {
         var display_id_buf: [@max(lib.typeDisplayLen(DisplayNumber), lib.typeDisplayLen(I2CBusNumber))]u8 = undefined;
+
+        // Acquire display lock.
+        try self.sem.wait();
+        defer self.sem.post();
 
         return runCommand(
             allocator,
