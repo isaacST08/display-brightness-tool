@@ -13,7 +13,7 @@ const DisplayNumber = display.DisplayNumber;
 
 /// The time in seconds until the state of the display(s) is assumed to still
 /// be valid.
-const USE_OLD_DATA_CUTOFF = 60;
+const USE_OLD_DATA_CUTOFF = 6;
 
 const allocator = std.heap.c_allocator;
 
@@ -24,6 +24,9 @@ pub fn main() !u8 {
 
     const self_pid: i32 = std.c.getpid();
 
+    var display_set = try display.DisplaySet.init(options.options.display, allocator);
+    defer display_set.deinit();
+
     // --- Get/Create the shared memory queue ---
     const shm_queue = try SharedMemoryObject(ProcQueue).init(shared_memory.SHARED_MEMORY_PATH_PREFIX ++ "queue", true);
     defer shm_queue.deinit();
@@ -31,20 +34,13 @@ pub fn main() !u8 {
         shm_queue.obj_ptr.* = ProcQueue{};
     const queue_ptr: *ProcQueue = shm_queue.obj_ptr;
 
-    // Get the list of displays to act on.
-    const display_numbers = try display.getDisplayNumbers(options.options.display, allocator);
-    defer allocator.free(display_numbers);
-
     // Wait for access to the monitor CS.
     queue_ptr.wait();
     std.debug.print("Pid {d} doing CS stuff.\n", .{self_pid});
 
     // Perform the action on all the monitors.
     if (options.options.action) |action| {
-        for (display_numbers) |display_number| {
-            // Get/Create the shared memory display to act on.
-            var shm_display = try MemoryDisplay.init(display_number);
-            defer shm_display.deinit();
+        for (display_set.shm_displays) |shm_display| {
             const display_ptr = shm_display.shm_display.obj_ptr;
 
             // std.Thread.sleep(2_000_000_000);
