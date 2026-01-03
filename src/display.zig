@@ -1,5 +1,6 @@
 const std = @import("std");
 const shared_memory = @import("shared_memory.zig");
+const lib = @import("lib.zig");
 
 const enums = std.enums;
 const fmt = std.fmt;
@@ -99,8 +100,8 @@ pub const Display = struct {
     /// `brightness` : u32 | The brightness to set the display to.
     pub fn setBrightness(self: *Display, brightness: u32) !void {
         // Used to convert ints (<=u32) to strings.
-        var brightness_buf: [intDisplayLen(u32)]u8 = undefined;
-        var display_comm_buf: [@max(intDisplayLen(DisplayNumber), intDisplayLen(I2CBusNumber))]u8 = undefined;
+        var brightness_buf: [lib.typeDisplayLen(u32)]u8 = undefined;
+        var display_comm_buf: [@max(lib.typeDisplayLen(DisplayNumber), lib.typeDisplayLen(I2CBusNumber))]u8 = undefined;
 
         // Cap the brightness to a safe range for the display.
         const capped_brightness: u32 = @min(brightness, self.max_brightness);
@@ -167,7 +168,7 @@ pub const Display = struct {
     /// Query the display for it's current brightness stats and update the
     /// local values to match.
     pub fn updateBrightness(self: *Display) !void {
-        var buf: [@max(intDisplayLen(DisplayNumber), intDisplayLen(I2CBusNumber))]u8 = undefined; // Used to convert ints (<=u32) to strings.
+        var buf: [@max(lib.typeDisplayLen(DisplayNumber), lib.typeDisplayLen(I2CBusNumber))]u8 = undefined; // Used to convert ints (<=u32) to strings.
 
         // Create array lists to record stdout and stderr from the child
         // process.
@@ -373,7 +374,7 @@ pub const Display = struct {
     /// -------
     /// The output string from running the getvcp command.
     fn getvcp(self: *Display, vcp_code: []const u8, extra_argv: anytype, max_output_bytes: usize) ![]const u8 {
-        var display_id_buf: [@max(intDisplayLen(DisplayNumber), intDisplayLen(I2CBusNumber))]u8 = undefined;
+        var display_id_buf: [@max(lib.typeDisplayLen(DisplayNumber), lib.typeDisplayLen(I2CBusNumber))]u8 = undefined;
 
         return runCommand(
             allocator,
@@ -390,7 +391,7 @@ pub const MemoryDisplay = struct {
     shm_display: SharedMemoryObject(Display),
 
     const SHM_DISPLAY_PATH_PREFIX: []const u8 = shared_memory.SHARED_MEMORY_PATH_PREFIX ++ "display-";
-    const SHM_DISPLAY_NUM_STR_MAX_LEN: usize = intDisplayLen(DisplayNumber);
+    const SHM_DISPLAY_NUM_STR_MAX_LEN: usize = lib.typeDisplayLen(DisplayNumber);
     const SHM_DISPLAY_PATH_LEN: usize = (SHM_DISPLAY_PATH_PREFIX.len + SHM_DISPLAY_NUM_STR_MAX_LEN + 1);
 
     pub fn init(display_number: DisplayNumber, display_detect_info: ?[]const u8) !MemoryDisplay {
@@ -446,22 +447,7 @@ pub const DisplaySet = struct {
                 // Create a buffer for the shared memory path.
                 // This buffer has room for the prefix and room for a suffix as
                 // the longest tag name of a display set enum.
-                var shm_path_buf: [
-                    shm_path_prefix.len + (blk: {
-                        // Get the length of the longest tag name of the
-                        // DisplayTag set.
-                        var longest_enum_len: usize = 0;
-                        for (enums.values(@TypeOf(value))) |et| {
-                            if (enums.tagName(@TypeOf(value), et)) |tag_name| {
-                                if (tag_name.len > longest_enum_len)
-                                    longest_enum_len = tag_name.len;
-                            }
-                        }
-                        break :blk longest_enum_len + 1; // Room for the null termination.
-                    })
-                    :
-                    0
-                ]u8 = undefined;
+                var shm_path_buf: [shm_path_prefix.len + lib.typeDisplayLen(@TypeOf(value)) + 1]u8 = undefined;
 
                 // Construct the shared memory path for this display.
                 const shm_path = (fmt.bufPrint(
@@ -572,10 +558,6 @@ pub const DisplaySet = struct {
 // **=======================================**
 // ||          <<<<< HELPERS >>>>>          ||
 // **=======================================**
-
-inline fn intDisplayLen(int_type: type) u64 {
-    return std.math.ceil(log10(@as(f64, pow(usize, 2, @bitSizeOf(int_type)))));
-}
 
 inline fn strCpyTrunc(dest: []u8, source: []const u8) void {
     _ = std.fmt.bufPrint(dest, "{s}", .{source[0..@min(source.len, dest.len)]}) catch unreachable;
