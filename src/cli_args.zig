@@ -11,8 +11,10 @@ const EXE_NAME: []const u8 = "displayctl";
 // ||          <<<<< OPTIONS >>>>>          ||
 // **=======================================**
 
+pub const ActionOptions = enum { set, increase, decrease, save, restore };
+
 const Options = struct {
-    action: ?enum { set, increase, decrease, save, restore } = null,
+    action: ?ActionOptions = null,
     value: ?i32 = null,
     display: DisplayTag = .{ .set = .all },
     @"clear-queue": bool = false,
