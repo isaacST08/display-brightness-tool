@@ -95,6 +95,11 @@ pub fn SharedMemoryObject(comptime T: type) type {
             }
         }
 
+        pub fn resize(self: *Self, new_len: usize) void {
+            self.obj_byte_arr = try std.posix.mremap(self.obj_byte_arr, self.obj_byte_arr.len, new_len, .{ .MAYMOVE = true }, null);
+            self.obj_ptr = std.mem.bytesAsValue(T, self.obj_byte_arr);
+        }
+
         pub fn sync(self: Self) void {
             _ = std.c.msync(@ptrCast(@alignCast(self.obj_byte_arr)), @intCast(@sizeOf(T)), std.c.MSF.SYNC);
         }
