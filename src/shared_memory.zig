@@ -100,8 +100,9 @@ pub fn SharedMemoryObject(comptime T: type) type {
             self.obj_ptr = std.mem.bytesAsValue(T, self.obj_byte_arr);
         }
 
-        pub fn sync(self: Self) void {
-            _ = std.c.msync(@ptrCast(@alignCast(self.obj_byte_arr)), @intCast(@sizeOf(T)), std.c.MSF.SYNC);
+        pub fn sync(self: Self) !void {
+            // _ = std.c.msync(@ptrCast(@alignCast(self.obj_byte_arr)), @intCast(@sizeOf(T)), std.c.MSF.SYNC);
+            try std.posix.msync(self.obj_byte_arr, std.posix.MSF.SYNC | std.posix.MSF.INVALIDATE);
         }
     };
 }
