@@ -11,7 +11,28 @@ const EXE_NAME: []const u8 = "displayctl";
 // ||          <<<<< OPTIONS >>>>>          ||
 // **=======================================**
 
-pub const ActionOptions = enum { set, increase, decrease, save, restore };
+pub const ActionOptions = enum {
+    set,
+    increase,
+    decrease,
+    save,
+    restore,
+
+    pub fn parse(x: []const u8) !@This() {
+        return if (std.mem.eql(u8, x, "set"))
+            .set
+        else if (std.mem.eql(u8, x, "increase"))
+            .increase
+        else if (std.mem.eql(u8, x, "decrease"))
+            .decrease
+        else if (std.mem.eql(u8, x, "save"))
+            .save
+        else if (std.mem.eql(u8, x, "restore"))
+            .restore
+        else
+            return error.InvalidInput;
+    }
+};
 
 const Options = struct {
     action: ?ActionOptions = null,
@@ -30,13 +51,25 @@ const Options = struct {
         .v = "value",
     };
 
+    pub const wrap_len = 50;
     pub const meta = .{
+        .usage_summary = "[options] [<action> [<value>]]",
+        .full_text =
+        \\Actions:
+        \\  set <value>
+        \\  increase <value>
+        \\  decrease <value>
+        \\  save
+        \\  restore
+        ,
         .option_docs = .{
             .@"clear-queue" = "Clear the action queue.",
             .display = "Perform the action on this display or set of displays. Can either be one of [all, oled] for that set of displays, or a display number. Default = all.",
-            .action = "The action to perform on the display(s). [set, increase, decrease, save, restore]",
-            .help = "help help",
-            .value = "The value to provide to the action. Only has an effect on the `set`, `increase`, and `decrease` actions.",
+            // .action = "The action to perform on the display(s). [set, increase, decrease, save, restore]",
+            .action = "A secondary way to set the action. Will override the positional value.",
+            .help = "Show this help.",
+            // .value = "The value to provide to the action. Only has an effect on the `set`, `increase`, and `decrease` actions.",
+            .value = "A secondary way to set the value for an action. Will override the positional value.",
             .verbose = "Print additional runtime info.",
         },
     };
@@ -76,21 +109,46 @@ fn printHelp(name: ?[]const u8, exit_code: u8, comptime err_msg: ?[]const u8, er
 }
 
 pub fn parseArgs() argsParser.ParseArgsResult(Options, null) {
-    const options = argsParser.parseForCurrentProcess(
+    var options = argsParser.parseForCurrentProcess(
         Options,
         std.heap.page_allocator,
         .print,
     ) catch printHelp(null, 1, null, .{});
 
-    std.debug.print("Parsed options:\n", .{});
-    inline for (std.meta.fields(@TypeOf(options.options))) |fld| {
-        std.debug.print("\t{s} = {any}\n", .{
-            fld.name,
-            @field(options.options, fld.name),
-        });
-    }
+    // std.debug.print("Parsed options:\n", .{});
+    // inline for (std.meta.fields(@TypeOf(options.options))) |fld| {
+    //     std.debug.print("\t{s} = {any}\n", .{
+    //         fld.name,
+    //         @field(options.options, fld.name),
+    //     });
+    // }
+    // std.debug.print("\nAll Parsed:\n{any}\n", .{options});
 
     // --- Args Validation ---
+
+    // Parse the positional `action` arg if not set by a flag.
+    if (options.positionals.len >= 1 and options.options.action == null) {
+        if (ActionOptions.parse(options.positionals[0])) |action| {
+            options.options.action = action;
+        } else |_| {}
+    }
+
+    // Parse the positional `value` arg if not set by a flag.
+    if (options.positionals.len >= 2 and options.options.value == null) {
+        if (std.fmt.parseInt(@typeInfo(@FieldType(Options, "value")).optional.child, options.positionals[1], 10)) |val| {
+            options.options.value = val;
+        } else |_| {
+            printHelp(
+                options.executable_name,
+                1,
+                "Could not parse value: \"{s}\" is not a valid number.\n",
+                .{options.positionals[1]},
+            );
+        }
+    }
+    // std.debug.print("\nModified All Parsed:\n{any}\n", .{options});
+
+    // Some actions require a value be set, ensure it for those actions.
     if (options.options.action) |action| {
         switch (action) {
             // Ensure "value" is set.
