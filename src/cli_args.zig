@@ -38,14 +38,14 @@ const Options = struct {
     action: ?ActionOptions = null,
     value: ?i32 = null,
     display: DisplayTag = .{ .set = .all },
-    @"clear-queue": bool = false,
+    @"clear-cache": bool = false,
     verbose: bool = false,
     help: bool = false,
 
     pub const shorthands = .{
         .V = "verbose",
         .a = "action",
-        .c = "clear-queue",
+        .c = "clear-cache",
         .d = "display",
         .h = "help",
         .v = "value",
@@ -63,7 +63,7 @@ const Options = struct {
         \\  restore
         ,
         .option_docs = .{
-            .@"clear-queue" = "Clear the action queue.",
+            .@"clear-cache" = "Clears the cache of display information.",
             .display = "Perform the action on this display or set of displays. Can either be one of [all, oled, non-oled] for that set of displays, or a display number. Default = all.",
             // .action = "The action to perform on the display(s). [set, increase, decrease, save, restore]",
             .action = "A secondary way to set the action. Will override the positional value.",

@@ -446,11 +446,13 @@ pub const DisplaySet = struct {
     tag: DisplayTag,
     allocator: Allocator,
     display_count: DisplayNumber,
+    shm_display_numbers: ?SharedMemoryObject([math.maxInt(DisplayNumber)]?DisplayNumber) = null,
     shm_displays: []MemoryDisplay,
 
     pub fn init(tag: DisplayTag, allocator: Allocator) !DisplaySet {
         switch (tag) {
             .set => |value| {
+
                 // ----- Get/Create Shared Memory -----
 
                 // --- Shared Memory Path ---
@@ -467,19 +469,18 @@ pub const DisplaySet = struct {
                 // Construct the shared memory path for this display.
                 const shm_path = (fmt.bufPrint(
                     &shm_path_buf,
-                    "{s}{?s}",
-                    .{ shm_path_prefix, enums.tagName(@TypeOf(tag.set), tag.set) },
+                    "{s}{s}",
+                    .{ shm_path_prefix, enums.tagName(@TypeOf(tag.set), tag.set) orelse "" },
                 ) catch unreachable);
 
                 // --- Shared Memory ---
 
                 // Get/Create the shared memory of the display.
-                const shm_display_numbers = try SharedMemoryObject([math.maxInt(DisplayNumber)]?DisplayNumber).init(shm_path, true);
-                defer shm_display_numbers.deinit();
                 var self = DisplaySet{
                     .tag = tag,
                     .allocator = allocator,
                     .display_count = 0,
+                    .shm_display_numbers = try .init(shm_path, true),
                     .shm_displays = undefined,
                 };
 
@@ -493,65 +494,67 @@ pub const DisplaySet = struct {
 
                 // If the shared memory was newly created, it must have it's
                 // contents initialized.
-                if (shm_display_numbers.created_new) {
+                if (self.shm_display_numbers) |*shm_display_numbers| {
+                    if (shm_display_numbers.created_new) {
 
-                    // Detect what displays are available.
-                    const display_detect_info = try getDisplayDetectionSlice(allocator);
-                    defer allocator.free(display_detect_info);
+                        // Detect what displays are available.
+                        const display_detect_info = try getDisplayDetectionSlice(allocator);
+                        defer allocator.free(display_detect_info);
 
-                    // Count the number of displays detected.
-                    const total_display_count = std.mem.count(u8, display_detect_info, "Display ");
+                        // Count the number of displays detected.
+                        const total_display_count = std.mem.count(u8, display_detect_info, "Display ");
 
-                    // Get the members of the display set.
-                    for (0..total_display_count) |i| {
-                        var shm_display = try MemoryDisplay.init(@intCast(i + 1), display_detect_info);
+                        // Get the members of the display set.
+                        for (0..total_display_count) |i| {
+                            var shm_display = try MemoryDisplay.init(@intCast(i + 1), display_detect_info);
 
-                        switch (value) {
-                            // Add all displays to the set.
-                            .all => {
-                                try shm_displays_arr_list.append(shm_display);
-                                self.display_count += 1;
-                            },
-                            // Add only OLED displays to the set.
-                            .oled => {
-                                if (shm_display.shm_display.obj_ptr.display_info.display_technology == .OLED) {
+                            switch (value) {
+                                // Add all displays to the set.
+                                .all => {
                                     try shm_displays_arr_list.append(shm_display);
                                     self.display_count += 1;
-                                } else {
-                                    shm_display.deinit();
-                                }
-                            },
-                            .non_oled => {
-                                if (shm_display.shm_display.obj_ptr.display_info.display_technology != .OLED) {
-                                    try shm_displays_arr_list.append(shm_display);
-                                    self.display_count += 1;
-                                } else {
-                                    shm_display.deinit();
-                                }
-                            },
+                                },
+                                // Add only OLED displays to the set.
+                                .oled => {
+                                    if (shm_display.shm_display.obj_ptr.display_info.display_technology == .OLED) {
+                                        try shm_displays_arr_list.append(shm_display);
+                                        self.display_count += 1;
+                                    } else {
+                                        shm_display.deinit();
+                                    }
+                                },
+                                .non_oled => {
+                                    if (shm_display.shm_display.obj_ptr.display_info.display_technology != .OLED) {
+                                        try shm_displays_arr_list.append(shm_display);
+                                        self.display_count += 1;
+                                    } else {
+                                        shm_display.deinit();
+                                    }
+                                },
+                            }
                         }
+
+                        // Move the array list contents to an owned slice.
+                        self.shm_displays = try shm_displays_arr_list.toOwnedSlice();
+
+                        // Save the set of display numbers.
+                        shm_display_numbers.obj_ptr.* = .{null} ** std.math.maxInt(DisplayNumber);
+                        for (self.shm_displays, 0..) |shm_dis, i| {
+                            shm_display_numbers.obj_ptr[i] = shm_dis.display_number;
+                        }
+                    } else {
+
+                        // Count the number of displays that will be in the set and
+                        // initialize those displays.
+                        var i: usize = 0;
+                        while (shm_display_numbers.obj_ptr[i]) |display_num| : (i += 1) {
+                            self.display_count += 1;
+                            try shm_displays_arr_list.append(try MemoryDisplay.init(@intCast(display_num), null));
+                        }
+
+                        // Convert the array list of memory displays to an array.
+                        self.shm_displays = try shm_displays_arr_list.toOwnedSlice();
                     }
-
-                    // Move the array list contents to an owned slice.
-                    self.shm_displays = try shm_displays_arr_list.toOwnedSlice();
-
-                    // Save the set of display numbers.
-                    shm_display_numbers.obj_ptr.* = .{null} ** std.math.maxInt(DisplayNumber);
-                    for (self.shm_displays, 0..) |shm_dis, i| {
-                        shm_display_numbers.obj_ptr[i] = shm_dis.display_number;
-                    }
-                } else {
-
-                    // Count the number of displays that will be in the set and
-                    // initialize those displays.
-                    var i: usize = 0;
-                    while (shm_display_numbers.obj_ptr[i]) |display_num| : (i += 1) {
-                        self.display_count += 1;
-                        try shm_displays_arr_list.append(try MemoryDisplay.init(@intCast(display_num), null));
-                    }
-
-                    // Convert the array list of memory displays to an array.
-                    self.shm_displays = try shm_displays_arr_list.toOwnedSlice();
                 }
 
                 return self;
@@ -571,6 +574,8 @@ pub const DisplaySet = struct {
     }
 
     pub fn deinit(self: *DisplaySet) void {
+        if (self.shm_display_numbers) |*sdn|
+            sdn.deinit();
         for (0..self.display_count) |i| {
             self.shm_displays[i].deinit();
         }

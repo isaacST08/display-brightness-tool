@@ -19,6 +19,21 @@ pub fn main() !u8 {
     var display_set = try display.DisplaySet.init(options.options.display, allocator);
     defer display_set.deinit();
 
+    // Clear the cache if requested.
+    if (options.options.@"clear-cache") {
+        // Flag the current shared memory used by the display set as non
+        // persistent.
+        if (display_set.shm_display_numbers) |*sdn|
+            sdn.persistent = false;
+        for (display_set.shm_displays) |*shm_display| {
+            shm_display.shm_display.persistent = false;
+        }
+
+        // Deinit the now non-persistent display set and re-init it.
+        display_set.deinit();
+        display_set = try display.DisplaySet.init(options.options.display, allocator);
+    }
+
     // Perform the action on all the monitors.
     if (options.options.action) |action| {
 
