@@ -22,7 +22,7 @@ pub const I2CBusNumber = u10;
 /// Can either be a number representing a single display, or a enum that
 /// corresponds to a set of displays.
 pub const DisplayTag = union((enum { set, number })) {
-    set: enum { all, oled },
+    set: enum { all, oled, non_oled },
     number: DisplayNumber,
 
     pub fn parse(x: []const u8) !@This() {
@@ -30,6 +30,8 @@ pub const DisplayTag = union((enum { set, number })) {
             .{ .set = .all }
         else if (mem.eql(u8, x, "oled"))
             .{ .set = .oled }
+        else if (mem.eql(u8, x, "non-oled") or mem.eql(u8, x, "non_oled"))
+            .{ .set = .non_oled }
         else if (fmt.parseInt(DisplayNumber, x, 10)) |num|
             .{ .number = num }
         else |err|
@@ -513,6 +515,14 @@ pub const DisplaySet = struct {
                             // Add only OLED displays to the set.
                             .oled => {
                                 if (shm_display.shm_display.obj_ptr.display_info.display_technology == .OLED) {
+                                    try shm_displays_arr_list.append(shm_display);
+                                    self.display_count += 1;
+                                } else {
+                                    shm_display.deinit();
+                                }
+                            },
+                            .non_oled => {
+                                if (shm_display.shm_display.obj_ptr.display_info.display_technology != .OLED) {
                                     try shm_displays_arr_list.append(shm_display);
                                     self.display_count += 1;
                                 } else {
