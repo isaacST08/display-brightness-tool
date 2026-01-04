@@ -19,12 +19,14 @@ pub fn main() !u8 {
     var display_set = try display.DisplaySet.init(options.options.display, allocator);
     defer display_set.deinit();
 
-    // Allocate memory for the workers that will each perform the action on one display.
-    var display_workers: []std.Thread = try allocator.alloc(std.Thread, display_set.display_count);
-    defer allocator.free(display_workers);
-
     // Perform the action on all the monitors.
     if (options.options.action) |action| {
+
+        // Allocate memory for the workers that will each perform the action on one display.
+        var display_workers: []std.Thread = try allocator.alloc(std.Thread, display_set.display_count);
+        defer allocator.free(display_workers);
+
+        // Perform the action on each display.
         for (display_set.shm_displays, 0..) |shm_display, i| {
             const display_ptr = shm_display.shm_display.obj_ptr;
 
@@ -41,11 +43,11 @@ pub fn main() !u8 {
                 .restore => try std.Thread.spawn(.{ .allocator = allocator }, Display.restoreBrightness, .{display_ptr}),
             };
         }
-    }
 
-    // Wait for all the workers to finish their display actions.
-    for (0..display_workers.len) |i| {
-        display_workers[i].join();
+        // Wait for all the workers to finish their display actions.
+        for (0..display_workers.len) |i| {
+            display_workers[i].join();
+        }
     }
 
     return 0;
