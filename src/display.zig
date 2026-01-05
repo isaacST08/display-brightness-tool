@@ -90,15 +90,18 @@ pub const Display = struct {
     /// Semaphore to protect access to the display.
     sem: QueueingSemaphore,
 
-    const BRIGHNESS_VCP_CODE = 10;
+    allocator: Allocator,
+
+    const BRIGHNESS_VCP_CODE = 0x10;
     const LAST_CHANGE_LIFE_SPAN = 20;
 
-    const allocator = std.heap.c_allocator;
+    // const allocator = std.heap.c_allocator;
 
-    pub fn init(display_number: DisplayNumber, display_detect_info: ?[]const u8) !Display {
+    pub fn init(display_number: DisplayNumber, display_detect_info: ?[]const u8, allocator: Allocator) !Display {
         var self = Display{
             .display_number = display_number,
             .sem = try .init(1),
+            .allocator = allocator,
         };
         try self._updateInfo(display_detect_info);
         try self._updateBrightness();
@@ -149,7 +152,7 @@ pub const Display = struct {
 
             // Set command to the VCP brightness code.
             "setvcp",
-            std.fmt.comptimePrint("{d}", .{BRIGHNESS_VCP_CODE}),
+            std.fmt.comptimePrint("{x}", .{BRIGHNESS_VCP_CODE}),
 
             // Brightness
             try std.fmt.bufPrint(&brightness_buf, "{d}", .{capped_brightness}),
@@ -158,7 +161,7 @@ pub const Display = struct {
             ++ ddcutilCommArgs(self, &display_comm_buf);
 
         // Execute the process.
-        var child = std.process.Child.init(&argv, allocator);
+        var child = std.process.Child.init(&argv, self.allocator);
         try child.spawn();
         _ = try child.wait();
 
@@ -282,50 +285,8 @@ pub const Display = struct {
     /// Query the display for it's current brightness stats and update the
     /// local values to match.
     fn _updateBrightness(self: *Display) !void {
-        var buf: [@max(lib.typeDisplayLen(DisplayNumber), lib.typeDisplayLen(I2CBusNumber))]u8 = undefined; // Used to convert ints (<=u32) to strings.
-
-        // Create array lists to record stdout and stderr from the child
-        // process.
-        var child_stdout = try std.ArrayList(u8).initCapacity(allocator, 512);
-        defer child_stdout.deinit(allocator);
-        var child_stderr = try std.ArrayList(u8).initCapacity(allocator, 8);
-        defer child_stderr.deinit(allocator);
-
-        std.debug.print("I2CBusNumber: {?d}\n", .{self.display_info.i2c_bus});
-        std.debug.print("Display number: {d}\n", .{self.display_number});
-
-        // Create command args to get the brightness info from the display.
-        const argv = [_][]const u8{
-            "ddcutil",
-
-            // Get from the VCP brightness code.
-            "getvcp",
-            fmt.comptimePrint("{d}", .{BRIGHNESS_VCP_CODE}),
-        }
-            // Display number or I2C bus (if available).
-            ++ ddcutilCommArgs(self, &buf);
-
-        // Set up the child process.
-        var child = std.process.Child.init(&argv, allocator);
-
-        // Collect child output.
-        child.stdout_behavior = .Pipe; // Record stdout
-        child.stderr_behavior = .Pipe; // Ignore stderr
-
-        // Acquire display lock.
-        try self.sem.wait();
-        defer self.sem.post();
-
-        // Exec the child.
-        try child.spawn();
-        try child.collectOutput(allocator, &child_stdout, &child_stderr, 512);
-
-        // Wait for the child to complete.
-        _ = try child.wait();
-
-        // Convert the stdout array list to a slice.
-        const child_stdout_slice = try child_stdout.toOwnedSlice(allocator);
-        defer allocator.free(child_stdout_slice);
+        const child_stdout_slice = try self.getvcp(BRIGHNESS_VCP_CODE, .{}, 512);
+        defer self.allocator.free(child_stdout_slice);
 
         // Parse display state information stdout from the child.
         var it = mem.splitScalar(u8, child_stdout_slice, ':');
@@ -335,10 +296,9 @@ pub const Display = struct {
             var param_it = mem.splitScalar(u8, x, '=');
 
             // Parse the name and value for this param.
-            const param_name =
-                if (param_it.next()) |y| mem.trim(u8, y, " \t\n") else continue;
+            const param_name = mem.trim(u8, param_it.next() orelse continue, " \t\n");
             const param_value =
-                fmt.parseInt(u32, if (param_it.next()) |y| mem.trim(u8, y, " \t\n") else continue, 10) catch continue;
+                fmt.parseInt(u32, mem.trim(u8, param_it.next() orelse continue, " \t\n"), 10) catch continue;
 
             // Set the appropriate values.
             if (mem.eql(u8, param_name, "current value"))
@@ -377,8 +337,8 @@ pub const Display = struct {
     ///     detection on its own.
     fn _updateInfo(self: *Display, detect_info: ?[]const u8) !void {
         // Detect displays and get the info.
-        const child_stdout_slice = detect_info orelse try getDisplayDetectionSlice(allocator);
-        defer if (detect_info == null) allocator.free(child_stdout_slice);
+        const child_stdout_slice = detect_info orelse try getDisplayDetectionSlice(self.allocator);
+        defer if (detect_info == null) self.allocator.free(child_stdout_slice);
 
         // Loop over each block of information corresponding to each different
         // display.
@@ -422,10 +382,8 @@ pub const Display = struct {
                     var kv_line_it = mem.splitScalar(u8, display_info_line, ':');
 
                     // Parse the key and value from the line.
-                    var key = kv_line_it.next() orelse continue :key_value_lines_loop;
-                    key = mem.trim(u8, key, " \n\t");
-                    var value = kv_line_it.rest();
-                    value = mem.trim(u8, value, " \n\t");
+                    const key = mem.trim(u8, kv_line_it.next() orelse continue :key_value_lines_loop, " \n\t");
+                    const value = mem.trim(u8, kv_line_it.rest(), " \n\t");
 
                     // --- Key = "I2C bus" ---
                     if (mem.eql(u8, key, "I2C bus")) {
@@ -457,8 +415,8 @@ pub const Display = struct {
         }
 
         // ----- Parse Display Type -----
-        const lower_monitor_name = try std.ascii.allocLowerString(allocator, &self.display_info.monitor);
-        defer allocator.free(lower_monitor_name);
+        const lower_monitor_name = try std.ascii.allocLowerString(self.allocator, &self.display_info.monitor);
+        defer self.allocator.free(lower_monitor_name);
 
         // If the monitor title contains the term "OLED" assume it is an OLED
         // display.
@@ -470,11 +428,11 @@ pub const Display = struct {
         // Otherwise, query the display for it's type.
         else {
             // // Query the display for it's technology type.
-            const display_type_raw = mem.trim(u8, try self.getvcp("0xb6", [_][]const u8{"--brief"}, 128), "\n");
-            defer allocator.free(display_type_raw);
+            const display_type_raw = try self.getvcp(0xb6, [_][]const u8{"--brief"}, 128);
+            defer self.allocator.free(display_type_raw);
 
             // Parse the result and apply it if it is an accepted value.
-            var display_type_raw_it = mem.splitBackwardsScalar(u8, display_type_raw, ' ');
+            var display_type_raw_it = mem.splitBackwardsScalar(u8, mem.trim(u8, display_type_raw, "\n"), ' ');
             const display_type_parsed_int = try fmt.parseInt(usize, mem.trimStart(u8, display_type_raw_it.first(), "x"), 16);
             if (enums.fromInt(DisplayTechnologyType, display_type_parsed_int)) |display_type_parsed| {
                 self.display_info.display_technology = display_type_parsed;
@@ -498,7 +456,7 @@ pub const Display = struct {
     /// Parameters
     /// ----------
     /// `self` : *Display | The display to query.
-    /// `vcp_code` : []const u8 | The VCP code to use for the query.
+    /// `vcp_code` : comptime usize | The VCP code to use for the query.
     /// `extra_argv` : comptime [][]const u8 | A comptime array of extra
     ///     arguments to pass to the VCP get command.
     /// `max_output_bytes` : usize | The maximum number of bytes (chars) that
@@ -507,7 +465,7 @@ pub const Display = struct {
     /// Returns
     /// -------
     /// The output string from running the getvcp command.
-    fn getvcp(self: *Display, vcp_code: []const u8, extra_argv: anytype, max_output_bytes: usize) ![]const u8 {
+    fn getvcp(self: *Display, comptime vcp_code: usize, extra_argv: anytype, max_output_bytes: usize) ![]const u8 {
         var display_id_buf: [@max(lib.typeDisplayLen(DisplayNumber), lib.typeDisplayLen(I2CBusNumber))]u8 = undefined;
 
         // Acquire display lock.
@@ -515,8 +473,8 @@ pub const Display = struct {
         defer self.sem.post();
 
         return runCommand(
-            allocator,
-            .{ "ddcutil", "getvcp", vcp_code } ++
+            self.allocator,
+            .{ "ddcutil", "getvcp", fmt.comptimePrint("{x}", .{vcp_code}) } ++
                 self.ddcutilCommArgs(&display_id_buf) ++
                 extra_argv,
             max_output_bytes,
@@ -532,7 +490,7 @@ pub const MemoryDisplay = struct {
     const SHM_DISPLAY_NUM_STR_MAX_LEN: usize = lib.typeDisplayLen(DisplayNumber);
     const SHM_DISPLAY_PATH_LEN: usize = (SHM_DISPLAY_PATH_PREFIX.len + SHM_DISPLAY_NUM_STR_MAX_LEN + 1);
 
-    pub fn init(display_number: DisplayNumber, display_detect_info: ?[]const u8) !MemoryDisplay {
+    pub fn init(display_number: DisplayNumber, display_detect_info: ?[]const u8, allocator: Allocator) !MemoryDisplay {
 
         // ----- Shared Memory Path -----
 
@@ -551,7 +509,7 @@ pub const MemoryDisplay = struct {
         // Get/Create the shared memory of the display.
         const shm_display = try SharedMemoryObject(Display).init(shm_path, true);
         if (shm_display.created_new) {
-            shm_display.obj_ptr.* = try Display.init(display_number, display_detect_info);
+            shm_display.obj_ptr.* = try Display.init(display_number, display_detect_info, allocator);
         }
 
         return .{
@@ -629,7 +587,7 @@ pub const DisplaySet = struct {
 
                         // Get the members of the display set.
                         for (0..total_display_count) |i| {
-                            var shm_display = try MemoryDisplay.init(@intCast(i + 1), display_detect_info);
+                            var shm_display = try MemoryDisplay.init(@intCast(i + 1), display_detect_info, allocator);
 
                             switch (value) {
                                 // Add all displays to the set.
@@ -672,7 +630,7 @@ pub const DisplaySet = struct {
                         var i: usize = 0;
                         while (shm_display_numbers.obj_ptr[i]) |display_num| : (i += 1) {
                             self.display_count += 1;
-                            try shm_displays_arr_list.append(try MemoryDisplay.init(@intCast(display_num), null));
+                            try shm_displays_arr_list.append(try MemoryDisplay.init(@intCast(display_num), null, allocator));
                         }
 
                         // Convert the array list of memory displays to an array.
@@ -684,7 +642,7 @@ pub const DisplaySet = struct {
             },
             .number => |display_number| {
                 var shm_displays = try allocator.alloc(MemoryDisplay, 1);
-                shm_displays[0] = try MemoryDisplay.init(display_number, null);
+                shm_displays[0] = try MemoryDisplay.init(display_number, null, allocator);
 
                 return .{
                     .tag = tag,
