@@ -64,7 +64,13 @@ const Options = struct {
         ,
         .option_docs = .{
             .@"clear-cache" = "Clears the cache of display information.",
-            .display = "Perform the action on this display or set of displays. Can either be one of [all, oled, non-oled] for that set of displays, or a display number. Default = all.",
+            .display = "Perform the action on this display or set of " ++
+                "displays. Can either be one of [all, oled, non-oled] for " ++
+                "that set of displays, or a display number. In addition, " ++
+                "special displays are also supported, should program be run" ++
+                " on the hyprland desktop environment, the display can also" ++
+                " be `hypr-active` to only control the brightness of the " ++
+                "currently active display. Default = all.",
             // .action = "The action to perform on the display(s). [set, increase, decrease, save, restore]",
             .action = "A secondary way to set the action. Will override the positional value.",
             .help = "Show this help.",

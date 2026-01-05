@@ -21,9 +21,10 @@ pub const I2CBusNumber = u10;
 /// An unique identifier or set identifier for a display.
 /// Can either be a number representing a single display, or a enum that
 /// corresponds to a set of displays.
-pub const DisplayTag = union((enum { set, number })) {
+pub const DisplayTag = union((enum { set, number, special })) {
     set: enum { all, oled, non_oled },
     number: DisplayNumber,
+    special: enum { hypr_active },
 
     pub fn parse(x: []const u8) !@This() {
         return if (mem.eql(u8, x, "all"))
@@ -32,6 +33,8 @@ pub const DisplayTag = union((enum { set, number })) {
             .{ .set = .oled }
         else if (mem.eql(u8, x, "non-oled") or mem.eql(u8, x, "non_oled"))
             .{ .set = .non_oled }
+        else if (mem.eql(u8, x, "hypr-active") or mem.eql(u8, x, "hypr_active"))
+            .{ .special = .hypr_active }
         else if (fmt.parseInt(DisplayNumber, x, 10)) |num|
             .{ .number = num }
         else |err|
@@ -450,7 +453,7 @@ pub const DisplaySet = struct {
     shm_displays: []MemoryDisplay,
 
     pub fn init(tag: DisplayTag, allocator: Allocator) !DisplaySet {
-        switch (tag) {
+        tag_sw: switch (tag) {
             .set => |value| {
 
                 // ----- Get/Create Shared Memory -----
@@ -569,6 +572,50 @@ pub const DisplaySet = struct {
                     .display_count = 1,
                     .shm_displays = shm_displays,
                 };
+            },
+            .special => |special_display_option| {
+                switch (special_display_option) {
+                    .hypr_active => {
+                        // Try to run the command to detect the active display
+                        // on hyprland.
+                        if (runCommand(allocator, [_][]const u8{ "hyprctl", "activeworkspace" }, 16384)) |aw_raw| {
+                            var lines_it = std.mem.splitScalar(u8, aw_raw, '\n');
+
+                            // Go through each line of the result looking for
+                            // "monitorID: N".
+                            while (lines_it.next()) |line| {
+                                var kv_it = std.mem.splitScalar(u8, line, ':');
+                                const key: []const u8 = std.mem.trim(u8, kv_it.next() orelse continue, " \t\n");
+                                const val: []const u8 = std.mem.trim(u8, kv_it.rest(), " \t\n");
+
+                                // If/when the monitor ID is found, create a
+                                // single-display display set using it.
+                                // Note: hyprland displays are 0 indexed
+                                // whereas ddcutil displays are 1 indexed, so
+                                // we increment by 1.
+                                if (std.mem.eql(u8, key, "monitorID")) {
+                                    if (std.fmt.parseInt(DisplayNumber, val, 10)) |display_num| {
+                                        continue :tag_sw .{ .number = display_num + 1 };
+                                    } else |_| {}
+                                }
+                            }
+                        }
+                        // If the hyprctl command fails, print the failure
+                        // message and return an empty display set.
+                        else |_| {}
+
+                        var stderr_buf: [128]u8 = undefined;
+                        var stderr = std.fs.File.stderr().writer(&stderr_buf).interface;
+                        stderr.print("Failed to detect hyprland active workspace.\n", .{}) catch {};
+
+                        return .{
+                            .tag = tag,
+                            .allocator = allocator,
+                            .display_count = 0,
+                            .shm_displays = try allocator.alloc(MemoryDisplay, 0),
+                        };
+                    },
+                }
             },
         }
     }
