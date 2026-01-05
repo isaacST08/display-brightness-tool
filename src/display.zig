@@ -69,7 +69,7 @@ pub const Display = struct {
     display_info: DisplayInfo = .{},
 
     /// The current brightness of the display.
-    brigtness: u32 = 0,
+    brightness: u32 = 0,
 
     /// The maximum brightness the display can be set to.
     max_brightness: u32 = 100,
@@ -80,6 +80,11 @@ pub const Display = struct {
 
     /// A saved brightness value that can be restored to later.
     saved_brightness: u32 = 0,
+
+    /// A saved brightness value that records the brightness of the display
+    /// before being dimmed.
+    /// If null, then the display is not currently dimmed.
+    pre_dim_brightness: ?u32 = 0,
 
     /// Semaphore to protect access to the display.
     sem: QueueingSemaphore,
@@ -147,13 +152,13 @@ pub const Display = struct {
 
         // Update the brightness of this display object.
         // Assumes the brightness of the physical display was set successfully.
-        self.brigtness = capped_brightness;
+        self.brightness = capped_brightness;
     }
 
     /// Increases the brightness of the display by the amount of
     /// `brightness_change`.
     pub fn increaseBrightness(self: *Display, brightness_change: i32) !void {
-        const brightness_absolute: u32 = @intCast(@as(i64, self.brigtness) + @as(i64, brightness_change));
+        const brightness_absolute: u32 = @intCast(@as(i64, self.brightness) + @as(i64, brightness_change));
 
         try self.setBrightness(brightness_absolute);
     }
@@ -166,13 +171,31 @@ pub const Display = struct {
 
     /// Saves the current brightness of the display.
     pub fn saveBrightness(self: *Display) void {
-        self.saved_brightness = self.brigtness;
+        self.saved_brightness = self.brightness;
     }
 
     /// Restores the brightness of the display to the currently saved
     /// brightness value.
     pub fn restoreBrightness(self: *Display) !void {
         try self.setBrightness(self.saved_brightness);
+    }
+
+    /// Saves the current brightness and dims the display by the requested
+    /// amount.
+    pub fn dimBrightness(self: *Display, dim_value: u32) !void {
+        if (self.pre_dim_brightness == null)
+            self.pre_dim_brightness = self.brightness;
+
+        try self.decreaseBrightness(@intCast(dim_value));
+    }
+
+    /// Restores the brightness of the display to the brightness it was at
+    /// before it was dimmed.
+    pub fn undimBrightness(self: *Display) !void {
+        if (self.pre_dim_brightness) |b| {
+            try self.setBrightness(b);
+            self.pre_dim_brightness = null;
+        }
     }
 
     /// Query the display for it's current brightness stats and update the
@@ -238,7 +261,7 @@ pub const Display = struct {
 
             // Set the appropriate values.
             if (mem.eql(u8, param_name, "current value"))
-                self.brigtness = param_value
+                self.brightness = param_value
             else if (mem.eql(u8, param_name, "max value"))
                 self.max_brightness = param_value;
         }

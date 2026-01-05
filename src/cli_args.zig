@@ -17,6 +17,8 @@ pub const ActionOptions = enum {
     decrease,
     save,
     restore,
+    dim,
+    undim,
 
     pub fn parse(x: []const u8) !@This() {
         return if (std.mem.eql(u8, x, "set"))
@@ -29,16 +31,20 @@ pub const ActionOptions = enum {
             .save
         else if (std.mem.eql(u8, x, "restore"))
             .restore
+        else if (std.mem.eql(u8, x, "dim"))
+            .dim
+        else if (std.mem.eql(u8, x, "undim"))
+            .undim
         else
             return error.InvalidInput;
     }
 };
 
 const Options = struct {
-    action: ?ActionOptions = null,
-    value: ?i32 = null,
     display: DisplayTag = .{ .set = .all },
     @"clear-cache": bool = false,
+    action: ?ActionOptions = null,
+    value: ?i32 = null,
     verbose: bool = false,
     help: bool = false,
 
@@ -61,6 +67,8 @@ const Options = struct {
         \\  decrease <value>
         \\  save
         \\  restore
+        \\  dim <value>
+        \\  undim
         ,
         .option_docs = .{
             .@"clear-cache" = "Clears the cache of display information.",
@@ -167,6 +175,11 @@ pub fn parseArgs() argsParser.ParseArgsResult(Options, null) {
                         .{std.enums.tagName(@TypeOf(action), action)},
                     );
                 }
+            },
+            // By default, dim by 40 marks.
+            .dim => {
+                if (options.options.value == null)
+                    options.options.value = 40;
             },
             else => {},
         }

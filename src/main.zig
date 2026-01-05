@@ -56,6 +56,8 @@ pub fn main() !u8 {
                 .decrease => try std.Thread.spawn(.{ .allocator = allocator }, Display.decreaseBrightness, .{ display_ptr, value }),
                 .save => try std.Thread.spawn(.{ .allocator = allocator }, Display.saveBrightness, .{display_ptr}),
                 .restore => try std.Thread.spawn(.{ .allocator = allocator }, Display.restoreBrightness, .{display_ptr}),
+                .dim => try std.Thread.spawn(.{ .allocator = allocator }, Display.dimBrightness, .{ display_ptr, @as(u32, @intCast(value)) }),
+                .undim => try std.Thread.spawn(.{ .allocator = allocator }, Display.undimBrightness, .{display_ptr}),
             };
         }
 
