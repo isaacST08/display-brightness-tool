@@ -1,0 +1,8 @@
+{
+  "args-0.0.0-CiLiqo_RAADz2TiHUzG5-0Mk7IZHR-h1SZgUrb_k4c7d": {
+    "name": "args",
+    "url": "git+https://github.com/ikskuh/zig-args?ref=master#e060ac80c244e9675471b6d213b22ddc83cc8f98",
+    "hash": "sha256-dT+/DpHdIeoZRz4XPXEknWk/XaPegwIP9DNRLpzTlqU=",
+    "rev": "e060ac80c244e9675471b6d213b22ddc83cc8f98"
+  }
+}
