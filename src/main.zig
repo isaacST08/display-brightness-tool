@@ -8,13 +8,9 @@ const cli_args = @import("cli_args.zig");
 /// be valid.
 const USE_OLD_DATA_CUTOFF = 60;
 
-// const allocator = std.heap.c_allocator;
-var da = std.heap.DebugAllocator(.{ .thread_safe = true }){};
-const allocator = da.allocator();
+const allocator = std.heap.c_allocator;
 
 pub fn main() !u8 {
-    defer _ = da.detectLeaks();
-
     // Parse the CLI args.
     const options = cli_args.parseArgs();
     defer options.deinit();
