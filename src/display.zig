@@ -14,6 +14,7 @@ const SharedMemoryObject = shared_memory.SharedMemoryObject;
 const pow = math.pow;
 const ceil = math.ceil;
 const log10 = math.log10;
+const runCommand = lib.runCommand;
 
 pub const DisplayNumber = u8;
 pub const I2CBusNumber = u10;
@@ -755,33 +756,6 @@ pub const DisplaySet = struct {
 
 inline fn strCpyTrunc(dest: []u8, source: []const u8) void {
     _ = std.fmt.bufPrint(dest, "{s}", .{source[0..@min(source.len, dest.len)]}) catch unreachable;
-}
-
-fn runCommand(allocator: Allocator, argv: anytype, max_output_bytes: usize) ![]const u8 {
-    // Create array lists to record stdout and stderr from the child
-    // process.
-    var child_stdout = try std.ArrayList(u8).initCapacity(allocator, 512);
-    defer child_stdout.deinit(allocator);
-    var child_stderr = try std.ArrayList(u8).initCapacity(allocator, 8);
-    defer child_stderr.deinit(allocator);
-
-    // Set up the child process.
-    var child = std.process.Child.init(&argv, allocator);
-
-    // Collect child output.
-    child.stdout_behavior = .Pipe; // Record stdout
-    child.stderr_behavior = .Pipe; // Ignore stderr
-
-    // Exec the child.
-    try child.spawn();
-    try child.collectOutput(allocator, &child_stdout, &child_stderr, max_output_bytes);
-
-    // Wait for the child to complete.
-    _ = try child.wait();
-
-    // Convert the stdout array list to a slice.
-    const child_stdout_slice = try child_stdout.toOwnedSlice(allocator);
-    return child_stdout_slice;
 }
 
 fn getDisplayDetectionSlice(allocator: Allocator) ![]const u8 {
