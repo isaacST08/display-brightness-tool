@@ -22,10 +22,10 @@
         src = cleanSource ./.;
 
         # Packages required for compiling
-        nativeBuildInputs = with env.pkgs; [];
+        nativeBuildInputs = with env.pkgs; [ddcutil];
 
         # Packages required for linking
-        buildInputs = with env.pkgs; [];
+        buildInputs = with env.pkgs; [ddcutil];
 
         # Prefer nix friendly settings.
         zigPreferMusl = false;
@@ -36,7 +36,7 @@
 
         # Libraries required for runtime
         # These packages will be added to the LD_LIBRARY_PATH
-        zigWrapperLibs = [];
+        zigWrapperLibs = with env.pkgs; [ddcutil];
       };
 
       # nix run .
