@@ -468,10 +468,6 @@ pub const Display = struct {
     fn getvcp(self: *Display, comptime vcp_code: usize, extra_argv: anytype, max_output_bytes: usize) ![]const u8 {
         var display_id_buf: [@max(lib.typeDisplayLen(DisplayNumber), lib.typeDisplayLen(I2CBusNumber))]u8 = undefined;
 
-        // Acquire display lock.
-        try self.sem.wait();
-        defer self.sem.post();
-
         return runCommand(
             self.allocator,
             .{ "ddcutil", "getvcp", fmt.comptimePrint("{x}", .{vcp_code}) } ++
