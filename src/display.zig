@@ -122,7 +122,7 @@ pub const Display = struct {
         try self.sem.wait();
         defer self.sem.post();
 
-        return self._setBrightness(brightness);
+        try self._setBrightness(brightness);
     }
 
     /// Sets the brightness of the display to `brightness`.
@@ -177,7 +177,7 @@ pub const Display = struct {
         try self.sem.wait();
         defer self.sem.post();
 
-        return self._increaseBrightness(brightness_change);
+        try self._increaseBrightness(brightness_change);
     }
 
     /// Increases the brightness of the display by the amount of
@@ -195,7 +195,7 @@ pub const Display = struct {
         try self.sem.wait();
         defer self.sem.post();
 
-        return self._decreaseBrightness(brightness_change);
+        try self._decreaseBrightness(brightness_change);
     }
 
     /// Decreases the brightness of the display by the amount of
@@ -210,7 +210,7 @@ pub const Display = struct {
         try self.sem.wait();
         defer self.sem.post();
 
-        return self._saveBrightness();
+        self._saveBrightness();
     }
 
     /// Saves the current brightness of the display.
@@ -225,7 +225,7 @@ pub const Display = struct {
         try self.sem.wait();
         defer self.sem.post();
 
-        return self._restoreBrightness();
+        try self._restoreBrightness();
     }
 
     /// Restores the brightness of the display to the currently saved
@@ -241,7 +241,7 @@ pub const Display = struct {
         try self.sem.wait();
         defer self.sem.post();
 
-        return self._dimBrightness(dim_value);
+        try self._dimBrightness(dim_value);
     }
 
     /// Saves the current brightness and dims the display by the requested
@@ -260,7 +260,7 @@ pub const Display = struct {
         try self.sem.wait();
         defer self.sem.post();
 
-        return self._undimBrightness();
+        try self._undimBrightness();
     }
 
     /// Restores the brightness of the display to the brightness it was at
@@ -279,7 +279,7 @@ pub const Display = struct {
         try self.sem.wait();
         defer self.sem.post();
 
-        return self._updateBrightness();
+        try self._updateBrightness();
     }
 
     /// Query the display for it's current brightness stats and update the
