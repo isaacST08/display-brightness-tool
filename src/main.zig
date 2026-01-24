@@ -45,7 +45,7 @@ pub fn main() !u8 {
         for (display_set.shm_displays, 0..) |shm_display, i| {
             const display_ptr = shm_display.shm_display.obj_ptr;
 
-            if (std.time.timestamp() - display_ptr.last_updated > USE_OLD_DATA_CUTOFF) {
+            if (std.time.timestamp() - display_ptr.last_updated.load(.seq_cst) > USE_OLD_DATA_CUTOFF) {
                 try display_ptr.updateBrightness();
             }
 

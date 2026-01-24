@@ -10,6 +10,7 @@ const mem = std.mem;
 
 const Allocator = mem.Allocator;
 const SharedMemoryObject = shared_memory.SharedMemoryObject;
+const Atomic = std.atomic.Value;
 
 const pow = math.pow;
 const ceil = math.ceil;
@@ -64,51 +65,62 @@ pub const DisplayInfo = struct {
 
 pub const Display = struct {
     /// The display number in the system.
-    display_number: DisplayNumber,
+    display_number: Atomic(DisplayNumber),
 
     /// Information related to the display.
     display_info: DisplayInfo = .{},
 
     /// The current brightness of the display.
-    brightness: u32 = 0,
+    brightness: Atomic(u32) = .init(0),
+
+    /// The working brightness used for brightness calculations before it is
+    /// sent to the display.
+    working_brightness: u32 = 0,
+    working_brightness_sem: QueueingSemaphore,
 
     /// The maximum brightness the display can be set to.
-    max_brightness: u32 = 100,
+    max_brightness: Atomic(u32) = .init(100),
 
     /// The time in seconds relative to the epoch when the brightness of the
     /// display was last updated.
-    last_updated: i64 = 0,
+    last_updated: Atomic(i64) = .init(0),
 
     /// A saved brightness value that can be restored to later.
-    saved_brightness: u32 = 0,
+    saved_brightness: Atomic(u32) = .init(0),
 
     /// A saved brightness value that records the brightness of the display
     /// before being dimmed.
     /// If null, then the display is not currently dimmed.
     pre_dim_brightness: ?u32 = null,
+    pre_dim_brightness_sem: QueueingSemaphore,
 
-    /// Semaphore to protect access to the display.
-    sem: QueueingSemaphore,
+    /// Semaphore to protect access to the physical display.
+    display_sem: QueueingSemaphore,
+
+    /// Semaphore used when syncing combined commands with the physical
+    /// display.
+    /// Used to ensure that all commands are actually sent to the display.
+    sync_sem: QueueingSemaphore,
 
     allocator: Allocator,
 
     const BRIGHNESS_VCP_CODE = 0x10;
-    const LAST_CHANGE_LIFE_SPAN = 20;
-
-    // const allocator = std.heap.c_allocator;
 
     pub fn init(display_number: DisplayNumber, display_detect_info: ?[]const u8, allocator: Allocator) !Display {
         var self = Display{
-            .display_number = display_number,
-            .sem = try .init(1),
+            .display_number = .init(display_number),
+            .display_sem = try .init(1),
+            .sync_sem = try .init(1),
+            .working_brightness_sem = try .init(1),
+            .pre_dim_brightness_sem = try .init(1),
             .allocator = allocator,
         };
-        try self._updateInfo(display_detect_info);
-        try self._updateBrightness();
+        try self.updateInfo(display_detect_info);
+        try self.updateBrightness();
         return self;
     }
 
-    /// Sets the brightness of the display to `brightness`.
+    /// Send the current brightness stored in `working_brightness` to the display.
     ///
     /// Will not exceed setting the brightness above the max brightness of the
     /// display.
@@ -116,35 +128,18 @@ pub const Display = struct {
     /// Parameters
     /// ----------
     /// `self` : *Display | The display to set the brightness of.
-    /// `brightness` : u32 | The brightness to set the display to.
-    pub fn setBrightness(self: *Display, brightness: u32) !void {
-        // Acquire display lock.
-        try self.sem.wait();
-        defer self.sem.post();
-
-        try self._setBrightness(brightness);
-    }
-
-    /// Sets the brightness of the display to `brightness`.
-    ///
-    /// Will not exceed setting the brightness above the max brightness of the
-    /// display.
-    ///
-    /// Parameters
-    /// ----------
-    /// `self` : *Display | The display to set the brightness of.
-    /// `brightness` : u32 | The brightness to set the display to.
-    fn _setBrightness(self: *Display, brightness: u32) !void {
+    fn sendBrightness(self: *Display) !void {
         // Used to convert ints (<=u32) to strings.
         var brightness_buf: [lib.typeDisplayLen(u32)]u8 = undefined;
         var display_comm_buf: [@max(lib.typeDisplayLen(DisplayNumber), lib.typeDisplayLen(I2CBusNumber))]u8 = undefined;
 
         // Cap the brightness to a safe range for the display.
-        const capped_brightness: u32 = @min(brightness, self.max_brightness);
+        const capped_brightness: u32 = blk: {
+            try self.working_brightness_sem.wait();
+            defer self.working_brightness_sem.post();
 
-        // std.debug.print("Capped brightness: {d}\n", .{capped_brightness});
-        // std.debug.print("I2CBusNumber: {?d}\n", .{self.display_info.i2c_bus});
-        // std.debug.print("Display number: {d}\n", .{self.display_number});
+            break :blk @min(self.working_brightness, self.max_brightness.load(.seq_cst));
+        };
 
         // Create the args to change the brightness using ddcutil.
         const argv = [_][]const u8{
@@ -167,126 +162,186 @@ pub const Display = struct {
 
         // Update the brightness of this display object.
         // Assumes the brightness of the physical display was set successfully.
-        self.brightness = capped_brightness;
+        self.brightness.store(capped_brightness, .seq_cst);
+    }
+
+    /// Sets the brightness of the display to `brightness`.
+    ///
+    /// Batches brightness commands together so that only one representative
+    /// thread communicates with the physical display on behalf of the other
+    /// threads and their "requests".
+    ///
+    /// Parameters
+    /// ----------
+    /// `self` : *Display | The display to set the brightness of.
+    /// `brightness` : u32 | The brightness to set the display to.
+    pub fn setBrightness(self: *Display, brightness: u32) !void {
+        {
+            try self.working_brightness_sem.wait();
+            defer self.working_brightness_sem.post();
+
+            self.working_brightness = @min(brightness, self.max_brightness.load(.seq_cst));
+        }
+
+        try self._setBrightness();
+    }
+
+    /// Sets the brightness of the display to the current value of `working_brightness`.
+    ///
+    /// Will not exceed setting the brightness above the max brightness of the
+    /// display.
+    ///
+    /// Parameters
+    /// ----------
+    /// `self` : *Display | The display to set the brightness of.
+    fn _setBrightness(self: *Display) !void {
+        // Try and acquire the lock for the physical display.
+        const display_sem_result: bool = blk: {
+            self.sync_sem.wait() catch break :blk false;
+            defer self.sync_sem.post();
+            break :blk self.display_sem.tryWait();
+        };
+
+        // If the lock was acquired, it is now this owning thread's
+        // responsibility converse with the physical display.
+        //
+        // Otherwise, the thread should have already modified the
+        // `working_brightness` variable and passes of responsibility to the
+        // display representative thread .
+        if (display_sem_result) {
+
+            // Send working brightness to display.
+            try self.sendBrightness();
+
+            // Acquire the sync lock so that no more threads can modify the
+            // `working_brightness` while the sync is occurring.
+            // This informs those threads that they (one of them) will need
+            // to become the new representative thread.
+            self.sync_sem.wait() catch try self.sync_sem.wait();
+            defer self.sync_sem.post();
+
+            // Release the lock on the display at the end of the sync but
+            // before release the sync lock.
+            // This allows for the next command thread to also become the
+            // next representative thread.
+            defer self.display_sem.post();
+
+            // If there are no more pending brightness commands, perform
+            // one last send (this is the sync).
+            if (self.sync_sem.count()) |e| {
+                if (e == 0) try self.sendBrightness();
+            } else |_| {}
+        }
     }
 
     /// Increases the brightness of the display by the amount of
     /// `brightness_change`.
+    ///
+    /// Parameters
+    /// ----------
+    /// `self` : *Display | The display to set the brightness of.
+    /// `brightness_change` : u32 | The relative brightness to increase the display brightness by.
     pub fn increaseBrightness(self: *Display, brightness_change: i32) !void {
-        // Acquire display lock.
-        try self.sem.wait();
-        defer self.sem.post();
+        {
+            try self.working_brightness_sem.wait();
+            defer self.working_brightness_sem.post();
 
-        try self._increaseBrightness(brightness_change);
-    }
+            self.working_brightness = @min(
+                @as(u32, @intCast(@max(
+                    @as(i64, self.working_brightness) + @as(i64, brightness_change),
+                    0,
+                ))),
+                self.max_brightness.load(.seq_cst),
+            );
+        }
 
-    /// Increases the brightness of the display by the amount of
-    /// `brightness_change`.
-    fn _increaseBrightness(self: *Display, brightness_change: i32) !void {
-        const brightness_absolute: u32 = @intCast(@as(i64, self.brightness) + @as(i64, brightness_change));
-
-        try self._setBrightness(brightness_absolute);
+        try self._setBrightness();
     }
 
     /// Decreases the brightness of the display by the amount of
     /// `brightness_change`.
+    ///
+    /// Parameters
+    /// ----------
+    /// `self` : *Display | The display to set the brightness of.
+    /// `brightness_change` : u32 | The relative brightness to decrease the display brightness by.
     pub fn decreaseBrightness(self: *Display, brightness_change: i32) !void {
-        // Acquire display lock.
-        try self.sem.wait();
-        defer self.sem.post();
-
-        try self._decreaseBrightness(brightness_change);
-    }
-
-    /// Decreases the brightness of the display by the amount of
-    /// `brightness_change`.
-    fn _decreaseBrightness(self: *Display, brightness_change: i32) !void {
-        try self._increaseBrightness(-1 * brightness_change);
+        try self.increaseBrightness(-1 * brightness_change);
     }
 
     /// Saves the current brightness of the display.
     pub fn saveBrightness(self: *Display) !void {
-        // Acquire display lock.
-        try self.sem.wait();
-        defer self.sem.post();
-
-        self._saveBrightness();
-    }
-
-    /// Saves the current brightness of the display.
-    fn _saveBrightness(self: *Display) void {
-        self.saved_brightness = self.brightness;
+        self.saved_brightness.store(self.brightness.load(.seq_cst), .seq_cst);
     }
 
     /// Restores the brightness of the display to the currently saved
     /// brightness value.
     pub fn restoreBrightness(self: *Display) !void {
-        // Acquire display lock.
-        try self.sem.wait();
-        defer self.sem.post();
+        {
+            try self.working_brightness_sem.wait();
+            defer self.working_brightness_sem.post();
 
-        try self._restoreBrightness();
-    }
+            self.working_brightness = self.saved_brightness.load(.seq_cst);
+        }
 
-    /// Restores the brightness of the display to the currently saved
-    /// brightness value.
-    fn _restoreBrightness(self: *Display) !void {
-        try self._setBrightness(self.saved_brightness);
+        try self._setBrightness();
     }
 
     /// Saves the current brightness and dims the display by the requested
     /// amount.
+    ///
+    /// If the display is currently dimmed, then the display will be dimmed
+    /// further but the save value will not be altered.
+    ///
+    /// Parameters
+    /// ----------
+    /// `self` : *Display | The display to set the brightness of.
+    /// `dim_value` : u32 | The amount to dim the display by.
     pub fn dimBrightness(self: *Display, dim_value: u32) !void {
-        // Acquire display lock.
-        try self.sem.wait();
-        defer self.sem.post();
+        {
+            try self.pre_dim_brightness_sem.wait();
+            defer self.pre_dim_brightness_sem.post();
 
-        try self._dimBrightness(dim_value);
-    }
+            if (self.pre_dim_brightness == null)
+                self.pre_dim_brightness = self.brightness.load(.seq_cst);
+        }
 
-    /// Saves the current brightness and dims the display by the requested
-    /// amount.
-    fn _dimBrightness(self: *Display, dim_value: u32) !void {
-        if (self.pre_dim_brightness == null)
-            self.pre_dim_brightness = self.brightness;
-
-        try self._decreaseBrightness(@intCast(dim_value));
+        try self.decreaseBrightness(@intCast(dim_value));
     }
 
     /// Restores the brightness of the display to the brightness it was at
     /// before it was dimmed.
     pub fn undimBrightness(self: *Display) !void {
-        // Acquire display lock.
-        try self.sem.wait();
-        defer self.sem.post();
+        const pdb = blk: {
+            try self.pre_dim_brightness_sem.wait();
+            defer self.pre_dim_brightness_sem.post();
 
-        try self._undimBrightness();
-    }
+            if (self.pre_dim_brightness) |b| {
+                try self.working_brightness_sem.wait();
+                defer self.working_brightness_sem.post();
 
-    /// Restores the brightness of the display to the brightness it was at
-    /// before it was dimmed.
-    fn _undimBrightness(self: *Display) !void {
-        if (self.pre_dim_brightness) |b| {
-            try self._setBrightness(b);
-            self.pre_dim_brightness = null;
+                self.working_brightness = b;
+            }
+
+            break :blk self.pre_dim_brightness;
+        };
+
+        // Set the brightness only if the display was actually dimmed.
+        if (pdb) |_| {
+            try self._setBrightness();
         }
     }
 
-    /// Query the display for it's current brightness stats and update the
-    /// local values to match.
-    pub fn updateBrightness(self: *Display) !void {
-        // Acquire display lock.
-        try self.sem.wait();
-        defer self.sem.post();
-
-        try self._updateBrightness();
-    }
-
-    /// Query the display for it's current brightness stats and update the
-    /// local values to match.
-    fn _updateBrightness(self: *Display) !void {
+    /// Query the display for it's current brightness stats and returns the
+    /// retrieved `brightness` and `max_brightness` values.
+    pub fn queryDisplayBrightness(self: *Display) !struct { brightness: u32, max_brightness: u32 } {
+        // Perform a `getvcp` command.
         const child_stdout_slice = try self.getvcp(BRIGHNESS_VCP_CODE, .{}, 512);
         defer self.allocator.free(child_stdout_slice);
+
+        // Variables to store the parsed values from the return value.
+        var parsed_brightness: u32 = 0;
+        var parsed_max_brightness: u32 = 0;
 
         // Parse display state information stdout from the child.
         var it = mem.splitScalar(u8, child_stdout_slice, ':');
@@ -302,13 +357,35 @@ pub const Display = struct {
 
             // Set the appropriate values.
             if (mem.eql(u8, param_name, "current value"))
-                self.brightness = param_value
+                parsed_brightness = param_value
             else if (mem.eql(u8, param_name, "max value"))
-                self.max_brightness = param_value;
+                parsed_max_brightness = param_value;
+        }
+
+        return .{
+            .brightness = parsed_brightness,
+            .max_brightness = parsed_max_brightness,
+        };
+    }
+
+    /// Query the display for it's current brightness stats and update the
+    /// local values to match.
+    pub fn updateBrightness(self: *Display) !void {
+        const query_result = try self.queryDisplayBrightness();
+
+        self.brightness.store(query_result.brightness, .seq_cst);
+        self.max_brightness.store(query_result.max_brightness, .seq_cst);
+
+        // Match the working brightness to the queried brightness.
+        {
+            try self.working_brightness_sem.wait();
+            defer self.working_brightness_sem.post();
+
+            self.working_brightness = query_result.brightness;
         }
 
         // Record the update time stamp.
-        self.last_updated = std.time.timestamp();
+        self.last_updated.store(std.time.timestamp(), .seq_cst);
     }
 
     /// Updates the info for this display.
@@ -320,22 +397,6 @@ pub const Display = struct {
     ///     which the info is parsed from. If null, then will run a display
     ///     detection on its own.
     pub fn updateInfo(self: *Display, detect_info: ?[]const u8) !void {
-        // Acquire display lock.
-        try self.sem.wait();
-        defer self.sem.post();
-
-        return self._updateInfo(detect_info);
-    }
-
-    /// Updates the info for this display.
-    ///
-    /// Parameters
-    /// ----------
-    /// `self` : *Display | The display to update the information of.
-    /// `detect_info` : ?[]const u8 | If not null, will be used as the slice in
-    ///     which the info is parsed from. If null, then will run a display
-    ///     detection on its own.
-    fn _updateInfo(self: *Display, detect_info: ?[]const u8) !void {
         // Detect displays and get the info.
         const child_stdout_slice = detect_info orelse try getDisplayDetectionSlice(self.allocator);
         defer if (detect_info == null) self.allocator.free(child_stdout_slice);
@@ -375,7 +436,7 @@ pub const Display = struct {
 
             // Parse the rest of the display information from this block if its
             // display number matches this display's number.
-            if (block_display_number == self.display_number) {
+            if (block_display_number == self.display_number.load(.seq_cst)) {
                 // Parse all the information for this display.
                 key_value_lines_loop: while (display_info_block_line_it.next()) |display_info_line| {
                     // Each info line takes the form "key: value".
@@ -440,10 +501,26 @@ pub const Display = struct {
         }
     }
 
+    /// Constructs the flags for a ddcutil command that are used to determine
+    /// which display to operate on and how.
+    ///
+    /// If an I2C bus is available for the given display, that is used,
+    /// otherwise, the display number is use.
+    ///
+    /// Parameters
+    /// ----------
+    /// `self` : *Display | The display to query.
+    /// `buf` : []u8 | The buffer used to print the string form of the display
+    ///     number or the I2C bus number into.
+    ///
+    /// Returns
+    /// -------
+    /// An array of 2 strings, the first is the flag, the second is the
+    /// appropriate value.
     inline fn ddcutilCommArgs(self: *Display, buf: []u8) [2][]const u8 {
         return .{
             if (self.display_info.i2c_bus == null) "-d" else "-b",
-            fmt.bufPrint(buf, "{d}", .{self.display_info.i2c_bus orelse self.display_number}) catch unreachable,
+            fmt.bufPrint(buf, "{d}", .{self.display_info.i2c_bus orelse self.display_number.load(.seq_cst)}) catch unreachable,
         };
     }
 
@@ -468,13 +545,15 @@ pub const Display = struct {
     fn getvcp(self: *Display, comptime vcp_code: usize, extra_argv: anytype, max_output_bytes: usize) ![]const u8 {
         var display_id_buf: [@max(lib.typeDisplayLen(DisplayNumber), lib.typeDisplayLen(I2CBusNumber))]u8 = undefined;
 
-        return runCommand(
+        const result: []const u8 = try runCommand(
             self.allocator,
             .{ "ddcutil", "getvcp", fmt.comptimePrint("{x}", .{vcp_code}) } ++
                 self.ddcutilCommArgs(&display_id_buf) ++
                 extra_argv,
             max_output_bytes,
         );
+
+        return result;
     }
 };
 
@@ -632,6 +711,8 @@ pub const DisplaySet = struct {
                         // Convert the array list of memory displays to an array.
                         self.shm_displays = try shm_displays_arr_list.toOwnedSlice();
                     }
+                } else {
+                    unreachable;
                 }
 
                 return self;
