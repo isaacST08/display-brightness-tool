@@ -1,7 +1,7 @@
 const std = @import("std");
-const shared_memory = @import("shared_memory.zig");
 const lib = @import("lib.zig");
-const QueueingSemaphore = @import("QueueingSemaphore.zig");
+const semaphore = @import("semaphore/semaphore.zig");
+const shared_memory = @import("shared_memory.zig");
 
 const enums = std.enums;
 const fmt = std.fmt;
@@ -9,8 +9,9 @@ const math = std.math;
 const mem = std.mem;
 
 const Allocator = mem.Allocator;
-const SharedMemoryObject = shared_memory.SharedMemoryObject;
 const Atomic = std.atomic.Value;
+const QueueingSemaphore = semaphore.QueueingSemaphore;
+const SharedMemoryObject = shared_memory.SharedMemoryObject;
 
 const pow = math.pow;
 const ceil = math.ceil;
