@@ -6,22 +6,111 @@ const QueueingSemaphore = @This();
 // ||          <<<<< FIELDS >>>>>          ||
 // **======================================**
 
-head: u8 = 0,
-tail: u8 = 0,
-count: u8 = 0,
 permits: usize,
-leader_queue_sem: InterProcessSemaphore,
-waiter_queue_sem: InterProcessSemaphore,
 cs_sem: InterProcessSemaphore,
-arr: [std.math.maxInt(u8) + 1]std.c.pid_t = [_]std.c.pid_t{-1} ** (std.math.maxInt(u8) + 1),
+queue: Queue,
 
 // **=======================================**
 // ||          <<<<< IMPORTS >>>>>          ||
 // **=======================================**
 
 const std = @import("std");
-// const CheckingSemaphore = @import("CheckingSemaphore.zig");
 const InterProcessSemaphore = @import("InterProcessSemaphore.zig");
+
+// **=========================================**
+// ||          <<<<< VARIABLES >>>>>          ||
+// **=========================================**
+
+// ----- SHORT-HANDS -----
+const pid_t = std.c.pid_t;
+const getpid = std.c.getpid;
+
+// ----- STRUCTS -----
+
+const Queue = struct {
+    // ----- FIELDS -----
+    head: u8 = 0,
+    tail: u8 = 0,
+    count: u8 = 0,
+
+    leader_sem: InterProcessSemaphore,
+    waiter_sem: InterProcessSemaphore,
+
+    arr: [std.math.maxInt(u8) + 1]pid_t = [_]pid_t{-1} ** (std.math.maxInt(u8) + 1),
+
+    // ----- METHODS -----
+
+    pub fn init() !Queue {
+        return .{
+            .leader_sem = try .init(1),
+            .waiter_sem = try .init(1),
+        };
+    }
+
+    fn _add(self: *Queue, val: pid_t) void {
+        self.arr[self.tail] = val;
+        self.tail +%= 1;
+        self.count +|= 1;
+    }
+
+    fn _peek(self: *Queue) pid_t {
+        return self.arr[self.head];
+    }
+
+    fn _pop(self: *Queue) pid_t {
+        const val = self._peek();
+
+        self.arr[self.head] = -1;
+        self.head +%= 1;
+        self.count -|= 1;
+
+        return val;
+    }
+
+    pub fn join(self: *Queue) void {
+        var waiting = true;
+        while (waiting) : ({
+            std.Thread.yield() catch {};
+            std.Thread.sleep(1_000_000); // 1 millisecond.
+        }) {
+            self.waiter_sem.wait() catch continue;
+            defer self.waiter_sem.post();
+            {
+                self.leader_sem.wait() catch continue;
+                defer self.leader_sem.post();
+
+                // Join the queue if there is room, otherwise keep waiting.
+                if (self.count < std.math.maxInt(u8)) {
+                    self._add(getpid());
+                    waiting = false;
+                }
+            }
+        }
+    }
+
+    pub fn peek(self: *Queue) !pid_t {
+        try self.leader_sem.wait();
+        defer self.leader_sem.post();
+
+        return self._peek();
+    }
+
+    pub fn pop(self: *Queue) !pid_t {
+        try self.leader_sem.wait();
+        defer self.leader_sem.post();
+
+        return self._pop();
+    }
+
+    pub fn leave(self: *Queue) !void {
+        try self.leader_sem.wait();
+        defer self.leader_sem.post();
+
+        if (self._peek() == std.c.getpid()) {
+            _ = self._pop();
+        }
+    }
+};
 
 // **=======================================**
 // ||          <<<<< METHODS >>>>>          ||
@@ -31,73 +120,34 @@ pub fn init(permits: usize) !QueueingSemaphore {
     return .{
         .permits = permits,
         .cs_sem = try .init(permits),
-        .leader_queue_sem = try .init(1),
-        .waiter_queue_sem = try .init(1),
+        .queue = try .init(),
     };
-}
-
-/// Adds the current process (via its PID) to the queue.
-fn join(self: *QueueingSemaphore) !void {
-    var waiting = true;
-    while (waiting) {
-        try self.waiter_queue_sem.wait();
-        errdefer self.waiter_queue_sem.post();
-        try self.leader_queue_sem.wait();
-        errdefer self.leader_queue_sem.post();
-        // Join the queue if there is room, otherwise keep waiting.
-        if (self.count < std.math.maxInt(u8)) {
-            self.arr[self.tail] = std.c.getpid();
-            self.tail +%= 1;
-            self.count +|= 1;
-            waiting = false;
-        }
-        self.leader_queue_sem.post();
-        self.waiter_queue_sem.post();
-        if (waiting) {
-            std.Thread.yield() catch {};
-            std.Thread.sleep(1_000_000);
-        }
-    }
 }
 
 /// Joins the current process (via its PID) to the queue and blocks until it's
 /// that process's turn.
 pub fn wait(self: *QueueingSemaphore) !void {
-    try self.join();
+    self.queue.join();
 
+    // Wait until it is this process's turn.
     var waiting = true;
-    while (waiting) {
-        try self.waiter_queue_sem.wait();
-        errdefer self.waiter_queue_sem.post();
-        try self.leader_queue_sem.wait();
-        errdefer self.leader_queue_sem.post();
-        if (self.arr[self.head] == std.c.getpid()) {
+    while (waiting) : (std.Thread.sleep(1_000_000)) {
+        if ((self.queue.peek() catch continue) == getpid()) {
             waiting = false;
-        }
-        self.leader_queue_sem.post();
-        self.waiter_queue_sem.post();
-
-        if (waiting) {
-            std.Thread.sleep(1_000_000);
         }
     }
 
+    // Acquire the critical section semaphore.
     try self.cs_sem.wait();
     errdefer self.cs_sem.post();
 
-    // Remove self from the head of the queue.
-    try self.leader_queue_sem.wait();
-    errdefer self.leader_queue_sem.post();
-    if (self.arr[self.head] == std.c.getpid()) {
-        self.arr[self.head] = -1;
-        self.head +%= 1;
-        self.count -|= 1;
-    }
-    self.leader_queue_sem.post();
+    // Remove self from the head of the queue (try twice).
+    try (self.queue.leave() catch self.queue.leave());
 }
+
+// pub fn tryWait(self: *QueueingSemaphore) bool {}
 
 /// Signals that this process has finished with the critical section.
 pub fn post(self: *QueueingSemaphore) void {
-    // Release the critical section semaphore.
     self.cs_sem.post();
 }
