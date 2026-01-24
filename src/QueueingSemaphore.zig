@@ -117,6 +117,15 @@ const Queue = struct {
 
         return self.count;
     }
+
+    pub fn skipable(self: *Queue) bool {
+        self.waiter_sem.wait() catch return false;
+        defer self.waiter_sem.post();
+        self.leader_sem.wait() catch return false;
+        defer self.leader_sem.post();
+
+        return (self.count == 0);
+    }
 };
 
 // **=======================================**
@@ -152,7 +161,9 @@ pub fn wait(self: *QueueingSemaphore) !void {
     try (self.queue.leave() catch self.queue.leave());
 }
 
-// pub fn tryWait(self: *QueueingSemaphore) bool {}
+pub fn tryWait(self: *QueueingSemaphore) bool {
+    return (self.queue.skipable() and self.cs_sem.tryWait());
+}
 
 /// Signals that this process has finished with the critical section.
 pub fn post(self: *QueueingSemaphore) void {
@@ -162,5 +173,5 @@ pub fn post(self: *QueueingSemaphore) void {
 /// Gets the number of "entities" currently waiting to join the semaphore
 /// queue.
 pub fn count(self: *QueueingSemaphore) !u8 {
-    return try self.queue.count();
+    return try self.queue.getCount();
 }
