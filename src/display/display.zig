@@ -1,7 +1,7 @@
 const std = @import("std");
-const lib = @import("lib.zig");
-const semaphore = @import("semaphore/semaphore.zig");
-const shared_memory = @import("shared_memory.zig");
+const lib = @import("lib");
+const semaphore = @import("semaphore");
+const shared_memory = @import("shared_memory");
 
 const enums = std.enums;
 const fmt = std.fmt;

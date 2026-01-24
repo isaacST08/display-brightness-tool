@@ -1,6 +1,6 @@
 const std = @import("std");
 const argsParser = @import("args");
-const display = @import("display.zig");
+const display = @import("display");
 
 const DisplayNumber = display.DisplayNumber;
 const DisplayTag = display.DisplayTag;

@@ -1,5 +1,5 @@
 const std = @import("std");
-const display = @import("display.zig");
+const display = @import("display");
 
 const Display = display.Display;
 const cli_args = @import("cli_args.zig");
