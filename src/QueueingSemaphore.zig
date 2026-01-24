@@ -110,6 +110,13 @@ const Queue = struct {
             _ = self._pop();
         }
     }
+
+    pub fn getCount(self: *Queue) !u8 {
+        try self.leader_sem.wait();
+        defer self.leader_sem.post();
+
+        return self.count;
+    }
 };
 
 // **=======================================**
@@ -150,4 +157,10 @@ pub fn wait(self: *QueueingSemaphore) !void {
 /// Signals that this process has finished with the critical section.
 pub fn post(self: *QueueingSemaphore) void {
     self.cs_sem.post();
+}
+
+/// Gets the number of "entities" currently waiting to join the semaphore
+/// queue.
+pub fn count(self: *QueueingSemaphore) !u8 {
+    return try self.queue.count();
 }
