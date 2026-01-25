@@ -45,6 +45,8 @@ const Options = struct {
     @"clear-cache": bool = false,
     action: ?ActionOptions = null,
     value: ?i32 = null,
+    update: bool = false,
+    @"update-threshold": u32 = 60,
     verbose: bool = false,
     help: bool = false,
 
@@ -54,6 +56,8 @@ const Options = struct {
         .c = "clear-cache",
         .d = "display",
         .h = "help",
+        .u = "update",
+        .t = "update-threshold",
         .v = "value",
     };
 
@@ -67,7 +71,7 @@ const Options = struct {
         \\  decrease <value>
         \\  save
         \\  restore
-        \\  dim <value>
+        \\  dim [value]
         \\  undim
         ,
         .option_docs = .{
@@ -79,12 +83,15 @@ const Options = struct {
                 " on the hyprland desktop environment, the display can also" ++
                 " be `hypr-active` to only control the brightness of the " ++
                 "currently active display. Default = all.",
-            // .action = "The action to perform on the display(s). [set, increase, decrease, save, restore]",
             .action = "A secondary way to set the action. Will override the positional value.",
             .help = "Show this help.",
-            // .value = "The value to provide to the action. Only has an effect on the `set`, `increase`, and `decrease` actions.",
             .value = "A secondary way to set the value for an action. Will override the positional value.",
             .verbose = "Print additional runtime info.",
+            .update = "Update the display brightness regardless of the time it was last updated.",
+            .@"update-threshold" = "The amount of time in seconds that the " ++
+                "previous brightness value is still assumed to be correct. " ++
+                "Set to 0 for no timeout. To unconditionally update, use " ++
+                "the `--update` flag. Default 60.",
         },
     };
 };
@@ -129,15 +136,6 @@ pub fn parseArgs() argsParser.ParseArgsResult(Options, null) {
         .print,
     ) catch printHelp(null, 1, null, .{});
 
-    // std.debug.print("Parsed options:\n", .{});
-    // inline for (std.meta.fields(@TypeOf(options.options))) |fld| {
-    //     std.debug.print("\t{s} = {any}\n", .{
-    //         fld.name,
-    //         @field(options.options, fld.name),
-    //     });
-    // }
-    // std.debug.print("\nAll Parsed:\n{any}\n", .{options});
-
     // --- Args Validation ---
 
     // Parse the positional `action` arg if not set by a flag.
@@ -160,7 +158,6 @@ pub fn parseArgs() argsParser.ParseArgsResult(Options, null) {
             );
         }
     }
-    // std.debug.print("\nModified All Parsed:\n{any}\n", .{options});
 
     // Some actions require a value be set, ensure it for those actions.
     if (options.options.action) |action| {
