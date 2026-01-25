@@ -37,6 +37,11 @@
         # Libraries required for runtime
         # These packages will be added to the LD_LIBRARY_PATH
         zigWrapperLibs = with env.pkgs; [ddcutil];
+
+        postInstall = ''
+          mkdir -p "$out/share/bash-completion/completions"
+          cp "${src}/shell_completions/display-brightness-tool.bash" "$out/share/bash-completion/completions/"
+        '';
       };
 
       # nix run .
