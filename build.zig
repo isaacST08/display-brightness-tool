@@ -5,6 +5,15 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
 
     // **=======================================**
+    // ||          <<<<< OPTIONS >>>>>          ||
+    // **=======================================**
+
+    const version: []const u8 = @import("build.zig.zon").version;
+
+    const options = b.addOptions();
+    options.addOption([]const u8, "version", version);
+
+    // **=======================================**
     // ||          <<<<< MODULES >>>>>          ||
     // **=======================================**
 
@@ -52,6 +61,10 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
+    // ----- Options -----
+    exe.root_module.addOptions("config", options);
+
+    // ----- Libraries/Modules -----
     exe.linkLibC();
     exe.root_module.addImport("lib", mod_lib);
     exe.root_module.addImport("semaphore", mod_semaphore);

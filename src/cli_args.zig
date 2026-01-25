@@ -1,6 +1,7 @@
 const std = @import("std");
 const argsParser = @import("args");
 const display = @import("display");
+const config = @import("config");
 
 const DisplayNumber = display.DisplayNumber;
 const DisplayTag = display.DisplayTag;
@@ -49,6 +50,7 @@ const Options = struct {
     @"update-threshold": u32 = 60,
     verbose: bool = false,
     help: bool = false,
+    version: bool = false,
 
     pub const shorthands = .{
         .V = "verbose",
@@ -92,6 +94,7 @@ const Options = struct {
                 "previous brightness value is still assumed to be correct. " ++
                 "Set to 0 for no timeout. To unconditionally update, use " ++
                 "the `--update` flag. Default 60.",
+            .version = "Print the program version.",
         },
     };
 };
@@ -127,6 +130,16 @@ fn printHelp(name: ?[]const u8, exit_code: u8, comptime err_msg: ?[]const u8, er
 
     // Exit.
     std.process.exit(exit_code);
+}
+
+fn printVersion() noreturn {
+    var stdout_writer_buf: [128]u8 = undefined;
+    var stdout = std.fs.File.stdout().writer(&stdout_writer_buf);
+
+    stdout.interface.print("Version: {s}\n", .{config.version}) catch {};
+    stdout.interface.flush() catch {};
+
+    std.process.exit(0);
 }
 
 pub fn parseArgs() argsParser.ParseArgsResult(Options, null) {
@@ -185,6 +198,11 @@ pub fn parseArgs() argsParser.ParseArgsResult(Options, null) {
     // --- Print Help ---
     if (options.options.help) {
         printHelp(options.executable_name, 0, null, .{});
+    }
+
+    // --- Print Version ---
+    if (options.options.version) {
+        printVersion();
     }
 
     return options;
