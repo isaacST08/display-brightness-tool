@@ -42,6 +42,11 @@
           mkdir -p "$out/share/bash-completion/completions"
           cp "${src}/shell_completions/display-brightness-tool.bash" "$out/share/bash-completion/completions/"
         '';
+
+        meta = {
+          description = "Tool for controlling the brightness of external displays";
+          mainProgram = "display-brightness-tool";
+        };
       };
 
       # nix run .
