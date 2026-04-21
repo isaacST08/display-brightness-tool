@@ -1,13 +1,13 @@
 .{
     .name = .display_brightness_tool,
-    .version = "0.4.0",
+    .version = "0.5.0",
     .dependencies = .{
         .args = .{
-            .url = "git+https://github.com/ikskuh/zig-args?ref=master#e060ac80c244e9675471b6d213b22ddc83cc8f98",
-            .hash = "args-0.0.0-CiLiqo_RAADz2TiHUzG5-0Mk7IZHR-h1SZgUrb_k4c7d",
+            .url = "git+https://github.com/ikskuh/zig-args#d47ae21768f9ec47c2a4154ab48b87166965b820",
+            .hash = "args-0.0.0-CiLiqmvgAADyJmrzcQTP9IOYNvTzR_KGrg3ZNNsH2Qv0",
         },
     },
-    .minimum_zig_version = "0.15.2",
+    .minimum_zig_version = "0.16.0",
     .paths = .{""},
     .fingerprint = 0x3ddad6c9540bfd5,
 }

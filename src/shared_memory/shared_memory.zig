@@ -66,12 +66,12 @@ pub fn SharedMemoryObject(comptime T: type) type {
             }
             // Otherwise, truncate memory to the appropriate length.
             else {
-                try std.posix.ftruncate(fd, @intCast(@sizeOf(T)));
+                _ = std.c.ftruncate(fd, @intCast(@sizeOf(T)));
                 created_new = true;
             }
 
             // Get the pointer to the object.
-            const obj_byte_arr = try std.posix.mmap(null, @intCast(@sizeOf(T)), std.posix.PROT.READ | std.posix.PROT.WRITE, .{ .TYPE = .SHARED }, fd, 0);
+            const obj_byte_arr = try std.posix.mmap(null, @intCast(@sizeOf(T)), .{ .READ = true, .WRITE = true }, .{ .TYPE = .SHARED }, fd, 0);
             const obj_ptr: *T = std.mem.bytesAsValue(T, obj_byte_arr);
 
             // Construct self and return.

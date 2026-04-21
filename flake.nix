@@ -13,7 +13,7 @@
     # Check the flake.nix in zig2nix project for more options:
     # <https://github.com/Cloudef/zig2nix/blob/master/flake.nix>
     env = zig2nix.outputs.zig-env.${system} {
-      zig = zig2nix.outputs.packages.${system}.zig-0_15_2;
+      zig = zig2nix.outputs.packages.${system}.zig-0_16_0;
     };
   in
     with builtins;
@@ -28,7 +28,7 @@
         buildInputs = with env.pkgs; [ddcutil];
 
         # Prefer nix friendly settings.
-        zigPreferMusl = false;
+        zigPreferMusl = true;
 
         # Executables required for runtime
         # These packages will be added to the PATH

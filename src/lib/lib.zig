@@ -36,37 +36,13 @@ pub fn typeDisplayLen(comptime T: type) u64 {
 /// Parameters
 /// ----------
 /// `allocator` : Allocator | The allocator that owns the returned slice.
+/// `io` : Io | The IO interface to use.
 /// `argv` : [][]const u8 | An array of strings that will be the arguments (and
 ///     the command itself) for the command.
-/// `max_output_bytes` : usize | The maximum amount of bytes that stdout will
-///     be allowed to produce.
-pub fn runCommand(allocator: Allocator, argv: anytype, max_output_bytes: usize) ![]const u8 {
-    // Create array lists to record stdout and stderr from the child process.
-    var child_stdout = try std.ArrayList(u8).initCapacity(allocator, 512);
-    defer child_stdout.deinit(allocator);
-    var child_stderr = try std.ArrayList(u8).initCapacity(allocator, 8);
-    defer child_stderr.deinit(allocator);
+pub fn runCommand(allocator: Allocator, io: std.Io, argv: anytype) ![]const u8 {
+    // Run the command and return the result.
+    const results = try std.process.run(allocator, io, .{ .argv = &argv });
+    allocator.free(results.stderr);
 
-    // Set up the child process.
-    var child = std.process.Child.init(&argv, allocator);
-
-    // Collect child output.
-    child.stdout_behavior = .Pipe; // Record stdout
-    child.stderr_behavior = .Pipe; // Ignore stderr
-
-    // Exec the child.
-    try child.spawn();
-    try child.collectOutput(
-        allocator,
-        &child_stdout,
-        &child_stderr,
-        max_output_bytes,
-    );
-
-    // Wait for the child to complete.
-    _ = try child.wait();
-
-    // Convert the stdout array list to a slice.
-    const child_stdout_slice = try child_stdout.toOwnedSlice(allocator);
-    return child_stdout_slice;
+    return results.stdout;
 }

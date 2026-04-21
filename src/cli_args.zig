@@ -103,12 +103,12 @@ const Options = struct {
 // ||          <<<<< ARGS PARSING >>>>>          ||
 // **============================================**
 
-fn printHelp(name: ?[]const u8, exit_code: u8, comptime err_msg: ?[]const u8, err_msg_args: anytype) noreturn {
+fn printHelp(io: std.Io, name: ?[]const u8, exit_code: u8, comptime err_msg: ?[]const u8, err_msg_args: anytype) noreturn {
     // Get the printer for output (either stderr or stdout).
     var writer_buf: [128]u8 = undefined;
     var stderr_writer_buf: [128]u8 = undefined;
-    var stderr = std.fs.File.stderr().writer(&stderr_writer_buf);
-    var output = (if (exit_code == 0) std.fs.File.stdout() else std.fs.File.stderr()).writer(&writer_buf);
+    var stderr = std.Io.File.stderr().writer(io, &stderr_writer_buf);
+    var output = (if (exit_code == 0) std.Io.File.stdout() else std.Io.File.stderr()).writer(io, &writer_buf);
 
     // Print the error message if provided.
     if (err_msg) |em| {
@@ -132,9 +132,9 @@ fn printHelp(name: ?[]const u8, exit_code: u8, comptime err_msg: ?[]const u8, er
     std.process.exit(exit_code);
 }
 
-fn printVersion() noreturn {
+fn printVersion(io: std.Io) noreturn {
     var stdout_writer_buf: [128]u8 = undefined;
-    var stdout = std.fs.File.stdout().writer(&stdout_writer_buf);
+    var stdout = std.Io.File.stdout().writer(io, &stdout_writer_buf);
 
     stdout.interface.print("Version: {s}\n", .{config.version}) catch {};
     stdout.interface.flush() catch {};
@@ -142,12 +142,13 @@ fn printVersion() noreturn {
     std.process.exit(0);
 }
 
-pub fn parseArgs() argsParser.ParseArgsResult(Options, null) {
+pub fn parseArgs(init: std.process.Init) argsParser.ParseArgsResult(Options, null) {
     var options = argsParser.parseForCurrentProcess(
         Options,
-        std.heap.page_allocator,
+        // std.heap.page_allocator,
+        init,
         .print,
-    ) catch printHelp(null, 1, null, .{});
+    ) catch printHelp(init.io, null, 1, null, .{});
 
     // --- Args Validation ---
 
@@ -164,6 +165,7 @@ pub fn parseArgs() argsParser.ParseArgsResult(Options, null) {
             options.options.value = val;
         } else |_| {
             printHelp(
+                init.io,
                 options.executable_name,
                 1,
                 "Could not parse value: \"{s}\" is not a valid number.\n",
@@ -179,6 +181,7 @@ pub fn parseArgs() argsParser.ParseArgsResult(Options, null) {
             .set, .increase, .decrease => {
                 if (options.options.value == null) {
                     printHelp(
+                        init.io,
                         options.executable_name,
                         1,
                         "The \"{?s}\" action requires that a value is set.\n",
@@ -197,12 +200,12 @@ pub fn parseArgs() argsParser.ParseArgsResult(Options, null) {
 
     // --- Print Help ---
     if (options.options.help) {
-        printHelp(options.executable_name, 0, null, .{});
+        printHelp(init.io, options.executable_name, 0, null, .{});
     }
 
     // --- Print Version ---
     if (options.options.version) {
-        printVersion();
+        printVersion(init.io);
     }
 
     return options;

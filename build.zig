@@ -58,6 +58,7 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/main.zig"),
             .optimize = optimize,
             .target = target,
+            .link_libc = true,
         }),
     });
 
@@ -65,7 +66,6 @@ pub fn build(b: *std.Build) void {
     exe.root_module.addOptions("config", options);
 
     // ----- Libraries/Modules -----
-    exe.linkLibC();
     exe.root_module.addImport("lib", mod_lib);
     exe.root_module.addImport("semaphore", mod_semaphore);
     exe.root_module.addImport("shared_memory", mod_shared_memory);

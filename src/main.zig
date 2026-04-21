@@ -5,15 +5,16 @@ const cli_args = @import("cli_args.zig");
 const Display = display.Display;
 const Thread = std.Thread;
 
-const allocator = std.heap.c_allocator;
+pub fn main(init: std.process.Init) !u8 {
+    const allocator = init.gpa;
+    const io = init.io;
 
-pub fn main() !u8 {
     // Parse the CLI args.
-    const options = cli_args.parseArgs();
+    const options = cli_args.parseArgs(init);
     defer options.deinit();
 
     // Get the set of displays to perform the action on.
-    var display_set = try display.DisplaySet.init(options.options.display, allocator);
+    var display_set = try display.DisplaySet.init(options.options.display, allocator, io);
     defer display_set.deinit();
 
     // Clear the cache if requested.
@@ -28,7 +29,7 @@ pub fn main() !u8 {
 
         // Deinit the now non-persistent display set and re-init it.
         display_set.deinit();
-        display_set = try display.DisplaySet.init(options.options.display, allocator);
+        display_set = try display.DisplaySet.init(options.options.display, allocator, io);
     }
 
     // Allocate memory for the workers that will each perform on one display.
@@ -39,7 +40,7 @@ pub fn main() !u8 {
     for (display_set.shm_displays, 0..) |shm_display, i| {
         const display_ptr = shm_display.shm_display.obj_ptr;
 
-        display_workers[i] = if (options.options.update or (options.options.@"update-threshold" != 0 and std.time.timestamp() - display_ptr.last_updated.load(.seq_cst) > options.options.@"update-threshold"))
+        display_workers[i] = if (options.options.update or (options.options.@"update-threshold" != 0 and std.Io.Timestamp.now(io, .real).toSeconds() - display_ptr.last_updated.load(.seq_cst) > options.options.@"update-threshold"))
             Thread.spawn(.{ .allocator = allocator }, Display.updateBrightness, .{display_ptr}) catch null
         else
             null;

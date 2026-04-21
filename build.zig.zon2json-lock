@@ -1,8 +1,7 @@
 {
-  "args-0.0.0-CiLiqo_RAADz2TiHUzG5-0Mk7IZHR-h1SZgUrb_k4c7d": {
+  "args-0.0.0-CiLiqmvgAADyJmrzcQTP9IOYNvTzR_KGrg3ZNNsH2Qv0": {
     "name": "args",
-    "url": "git+https://github.com/ikskuh/zig-args?ref=master#e060ac80c244e9675471b6d213b22ddc83cc8f98",
-    "hash": "sha256-dT+/DpHdIeoZRz4XPXEknWk/XaPegwIP9DNRLpzTlqU=",
-    "rev": "e060ac80c244e9675471b6d213b22ddc83cc8f98"
+    "url": "git+https://github.com/ikskuh/zig-args#d47ae21768f9ec47c2a4154ab48b87166965b820",
+    "hash": "sha256-IU++sqa0n6zRd83K3UbtqUcJvg76+ZwnA3ztd02Oecs="
   }
 }

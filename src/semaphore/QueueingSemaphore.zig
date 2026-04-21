@@ -67,11 +67,11 @@ const Queue = struct {
         return val;
     }
 
-    pub fn join(self: *Queue) void {
+    pub fn join(self: *Queue, io: std.Io) void {
         var waiting = true;
         while (waiting) : ({
             std.Thread.yield() catch {};
-            std.Thread.sleep(1_000_000); // 1 millisecond.
+            io.sleep(.fromMilliseconds(1), .awake) catch {};
         }) {
             self.waiter_sem.wait() catch continue;
             defer self.waiter_sem.post();
@@ -142,12 +142,12 @@ pub fn init(permits: usize) !QueueingSemaphore {
 
 /// Joins the current process (via its PID) to the queue and blocks until it's
 /// that process's turn.
-pub fn wait(self: *QueueingSemaphore) !void {
-    self.queue.join();
+pub fn wait(self: *QueueingSemaphore, io: std.Io) !void {
+    self.queue.join(io);
 
     // Wait until it is this process's turn.
     var waiting = true;
-    while (waiting) : (std.Thread.sleep(1_000_000)) {
+    while (waiting) : (io.sleep(.fromMilliseconds(1), .awake) catch {}) {
         if ((self.queue.peek() catch continue) == getpid()) {
             waiting = false;
         }

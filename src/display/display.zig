@@ -104,10 +104,11 @@ pub const Display = struct {
     sync_sem: QueueingSemaphore,
 
     allocator: Allocator,
+    io: std.Io,
 
     const BRIGHNESS_VCP_CODE = 0x10;
 
-    pub fn init(display_number: DisplayNumber, display_detect_info: ?[]const u8, allocator: Allocator) !Display {
+    pub fn init(display_number: DisplayNumber, display_detect_info: ?[]const u8, allocator: Allocator, io: std.Io) !Display {
         var self = Display{
             .display_number = .init(display_number),
             .display_sem = try .init(1),
@@ -115,6 +116,7 @@ pub const Display = struct {
             .working_brightness_sem = try .init(1),
             .pre_dim_brightness_sem = try .init(1),
             .allocator = allocator,
+            .io = io,
         };
         try self.updateInfo(display_detect_info);
         try self.updateBrightness();
@@ -136,7 +138,7 @@ pub const Display = struct {
 
         // Cap the brightness to a safe range for the display.
         const capped_brightness: u32 = blk: {
-            try self.working_brightness_sem.wait();
+            try self.working_brightness_sem.wait(self.io);
             defer self.working_brightness_sem.post();
 
             break :blk @min(self.working_brightness, self.max_brightness.load(.seq_cst));
@@ -157,9 +159,12 @@ pub const Display = struct {
             ++ ddcutilCommArgs(self, &display_comm_buf);
 
         // Execute the process.
-        var child = std.process.Child.init(&argv, self.allocator);
-        try child.spawn();
-        _ = try child.wait();
+        var child = try std.process.spawn(self.io, .{
+            .argv = &argv,
+            .stderr = .ignore,
+            .stdout = .ignore,
+        });
+        _ = try child.wait(self.io);
 
         // Update the brightness of this display object.
         // Assumes the brightness of the physical display was set successfully.
@@ -178,7 +183,7 @@ pub const Display = struct {
     /// `brightness` : u32 | The brightness to set the display to.
     pub fn setBrightness(self: *Display, brightness: u32) !void {
         {
-            try self.working_brightness_sem.wait();
+            try self.working_brightness_sem.wait(self.io);
             defer self.working_brightness_sem.post();
 
             self.working_brightness = @min(brightness, self.max_brightness.load(.seq_cst));
@@ -198,7 +203,7 @@ pub const Display = struct {
     fn _setBrightness(self: *Display) !void {
         // Try and acquire the lock for the physical display.
         const display_sem_result: bool = blk: {
-            self.sync_sem.wait() catch break :blk false;
+            self.sync_sem.wait(self.io) catch break :blk false;
             defer self.sync_sem.post();
             break :blk self.display_sem.tryWait();
         };
@@ -218,7 +223,7 @@ pub const Display = struct {
             // `working_brightness` while the sync is occurring.
             // This informs those threads that they (one of them) will need
             // to become the new representative thread.
-            self.sync_sem.wait() catch try self.sync_sem.wait();
+            self.sync_sem.wait(self.io) catch try self.sync_sem.wait(self.io);
             defer self.sync_sem.post();
 
             // Release the lock on the display at the end of the sync but
@@ -244,7 +249,7 @@ pub const Display = struct {
     /// `brightness_change` : u32 | The relative brightness to increase the display brightness by.
     pub fn increaseBrightness(self: *Display, brightness_change: i32) !void {
         {
-            try self.working_brightness_sem.wait();
+            try self.working_brightness_sem.wait(self.io);
             defer self.working_brightness_sem.post();
 
             self.working_brightness = @min(
@@ -279,7 +284,7 @@ pub const Display = struct {
     /// brightness value.
     pub fn restoreBrightness(self: *Display) !void {
         {
-            try self.working_brightness_sem.wait();
+            try self.working_brightness_sem.wait(self.io);
             defer self.working_brightness_sem.post();
 
             self.working_brightness = self.saved_brightness.load(.seq_cst);
@@ -300,7 +305,7 @@ pub const Display = struct {
     /// `dim_value` : u32 | The amount to dim the display by.
     pub fn dimBrightness(self: *Display, dim_value: u32) !void {
         {
-            try self.pre_dim_brightness_sem.wait();
+            try self.pre_dim_brightness_sem.wait(self.io);
             defer self.pre_dim_brightness_sem.post();
 
             if (self.pre_dim_brightness == null)
@@ -314,11 +319,11 @@ pub const Display = struct {
     /// before it was dimmed.
     pub fn undimBrightness(self: *Display) !void {
         const pdb = blk: {
-            try self.pre_dim_brightness_sem.wait();
+            try self.pre_dim_brightness_sem.wait(self.io);
             defer self.pre_dim_brightness_sem.post();
 
             if (self.pre_dim_brightness) |b| {
-                try self.working_brightness_sem.wait();
+                try self.working_brightness_sem.wait(self.io);
                 defer self.working_brightness_sem.post();
 
                 self.working_brightness = b;
@@ -337,7 +342,7 @@ pub const Display = struct {
     /// retrieved `brightness` and `max_brightness` values.
     pub fn queryDisplayBrightness(self: *Display) !struct { brightness: u32, max_brightness: u32 } {
         // Perform a `getvcp` command.
-        const child_stdout_slice = try self.getvcp(BRIGHNESS_VCP_CODE, .{}, 512);
+        const child_stdout_slice = try self.getvcp(BRIGHNESS_VCP_CODE, .{});
         defer self.allocator.free(child_stdout_slice);
 
         // Variables to store the parsed values from the return value.
@@ -379,14 +384,14 @@ pub const Display = struct {
 
         // Match the working brightness to the queried brightness.
         {
-            try self.working_brightness_sem.wait();
+            try self.working_brightness_sem.wait(self.io);
             defer self.working_brightness_sem.post();
 
             self.working_brightness = query_result.brightness;
         }
 
         // Record the update time stamp.
-        self.last_updated.store(std.time.timestamp(), .seq_cst);
+        self.last_updated.store(std.Io.Timestamp.now(self.io, .real).toSeconds(), .seq_cst);
     }
 
     /// Updates the info for this display.
@@ -399,7 +404,7 @@ pub const Display = struct {
     ///     detection on its own.
     pub fn updateInfo(self: *Display, detect_info: ?[]const u8) !void {
         // Detect displays and get the info.
-        const child_stdout_slice = detect_info orelse try getDisplayDetectionSlice(self.allocator);
+        const child_stdout_slice = detect_info orelse try getDisplayDetectionSlice(self.allocator, self.io);
         defer if (detect_info == null) self.allocator.free(child_stdout_slice);
 
         // Loop over each block of information corresponding to each different
@@ -490,7 +495,7 @@ pub const Display = struct {
         // Otherwise, query the display for it's type.
         else {
             // // Query the display for it's technology type.
-            const display_type_raw = try self.getvcp(0xb6, [_][]const u8{"--brief"}, 128);
+            const display_type_raw = try self.getvcp(0xb6, [_][]const u8{"--brief"});
             defer self.allocator.free(display_type_raw);
 
             // Parse the result and apply it if it is an accepted value.
@@ -543,15 +548,15 @@ pub const Display = struct {
     /// Returns
     /// -------
     /// The output string from running the getvcp command.
-    fn getvcp(self: *Display, comptime vcp_code: usize, extra_argv: anytype, max_output_bytes: usize) ![]const u8 {
+    fn getvcp(self: *Display, comptime vcp_code: usize, extra_argv: anytype) ![]const u8 {
         var display_id_buf: [@max(lib.typeDisplayLen(DisplayNumber), lib.typeDisplayLen(I2CBusNumber))]u8 = undefined;
 
         const result: []const u8 = try runCommand(
             self.allocator,
+            self.io,
             .{ "ddcutil", "getvcp", fmt.comptimePrint("{x}", .{vcp_code}) } ++
                 self.ddcutilCommArgs(&display_id_buf) ++
                 extra_argv,
-            max_output_bytes,
         );
 
         return result;
@@ -566,7 +571,7 @@ pub const MemoryDisplay = struct {
     const SHM_DISPLAY_NUM_STR_MAX_LEN: usize = lib.typeDisplayLen(DisplayNumber);
     const SHM_DISPLAY_PATH_LEN: usize = (SHM_DISPLAY_PATH_PREFIX.len + SHM_DISPLAY_NUM_STR_MAX_LEN + 1);
 
-    pub fn init(display_number: DisplayNumber, display_detect_info: ?[]const u8, allocator: Allocator) !MemoryDisplay {
+    pub fn init(display_number: DisplayNumber, display_detect_info: ?[]const u8, allocator: Allocator, io: std.Io) !MemoryDisplay {
 
         // ----- Shared Memory Path -----
 
@@ -585,7 +590,7 @@ pub const MemoryDisplay = struct {
         // Get/Create the shared memory of the display.
         const shm_display = try SharedMemoryObject(Display).init(shm_path, true);
         if (shm_display.created_new) {
-            shm_display.obj_ptr.* = try Display.init(display_number, display_detect_info, allocator);
+            shm_display.obj_ptr.* = try Display.init(display_number, display_detect_info, allocator, io);
         }
 
         return .{
@@ -602,11 +607,12 @@ pub const MemoryDisplay = struct {
 pub const DisplaySet = struct {
     tag: DisplayTag,
     allocator: Allocator,
+    io: std.Io,
     display_count: DisplayNumber,
     shm_display_numbers: ?SharedMemoryObject([math.maxInt(DisplayNumber)]?DisplayNumber) = null,
     shm_displays: []MemoryDisplay,
 
-    pub fn init(tag: DisplayTag, allocator: Allocator) !DisplaySet {
+    pub fn init(tag: DisplayTag, allocator: Allocator, io: std.Io) !DisplaySet {
         tag_sw: switch (tag) {
             .set => |value| {
 
@@ -636,6 +642,7 @@ pub const DisplaySet = struct {
                 var self = DisplaySet{
                     .tag = tag,
                     .allocator = allocator,
+                    .io = io,
                     .display_count = 0,
                     .shm_display_numbers = try .init(shm_path, true),
                     .shm_displays = undefined,
@@ -655,7 +662,7 @@ pub const DisplaySet = struct {
                     if (shm_display_numbers.created_new) {
 
                         // Detect what displays are available.
-                        const display_detect_info = try getDisplayDetectionSlice(allocator);
+                        const display_detect_info = try getDisplayDetectionSlice(allocator, io);
                         defer allocator.free(display_detect_info);
 
                         // Count the number of displays detected.
@@ -663,7 +670,7 @@ pub const DisplaySet = struct {
 
                         // Get the members of the display set.
                         for (0..total_display_count) |i| {
-                            var shm_display = try MemoryDisplay.init(@intCast(i + 1), display_detect_info, allocator);
+                            var shm_display = try MemoryDisplay.init(@intCast(i + 1), display_detect_info, allocator, io);
 
                             switch (value) {
                                 // Add all displays to the set.
@@ -706,7 +713,7 @@ pub const DisplaySet = struct {
                         var i: usize = 0;
                         while (shm_display_numbers.obj_ptr[i]) |display_num| : (i += 1) {
                             self.display_count += 1;
-                            try shm_displays_arr_list.append(try MemoryDisplay.init(@intCast(display_num), null, allocator));
+                            try shm_displays_arr_list.append(try MemoryDisplay.init(@intCast(display_num), null, allocator, io));
                         }
 
                         // Convert the array list of memory displays to an array.
@@ -720,11 +727,12 @@ pub const DisplaySet = struct {
             },
             .number => |display_number| {
                 var shm_displays = try allocator.alloc(MemoryDisplay, 1);
-                shm_displays[0] = try MemoryDisplay.init(display_number, null, allocator);
+                shm_displays[0] = try MemoryDisplay.init(display_number, null, allocator, io);
 
                 return .{
                     .tag = tag,
                     .allocator = allocator,
+                    .io = io,
                     .display_count = 1,
                     .shm_displays = shm_displays,
                 };
@@ -734,7 +742,7 @@ pub const DisplaySet = struct {
                     .hypr_active => {
                         // Try to run the command to detect the active display
                         // on hyprland.
-                        if (runCommand(allocator, [_][]const u8{ "hyprctl", "activeworkspace" }, 16384)) |aw_raw| {
+                        if (runCommand(allocator, io, [_][]const u8{ "hyprctl", "activeworkspace" })) |aw_raw| {
                             var lines_it = std.mem.splitScalar(u8, aw_raw, '\n');
 
                             // Go through each line of the result looking for
@@ -761,12 +769,13 @@ pub const DisplaySet = struct {
                         else |_| {}
 
                         var stderr_buf: [128]u8 = undefined;
-                        var stderr = std.fs.File.stderr().writer(&stderr_buf).interface;
+                        var stderr = std.Io.File.stderr().writer(io, &stderr_buf).interface;
                         stderr.print("Failed to detect hyprland active workspace.\n", .{}) catch {};
 
                         return .{
                             .tag = tag,
                             .allocator = allocator,
+                            .io = io,
                             .display_count = 0,
                             .shm_displays = try allocator.alloc(MemoryDisplay, 0),
                         };
@@ -794,6 +803,6 @@ inline fn strCpyTrunc(dest: []u8, source: []const u8) void {
     _ = std.fmt.bufPrint(dest, "{s}", .{source[0..@min(source.len, dest.len)]}) catch unreachable;
 }
 
-fn getDisplayDetectionSlice(allocator: Allocator) ![]const u8 {
-    return runCommand(allocator, [_][]const u8{ "ddcutil", "detect", "--brief" }, 16384);
+fn getDisplayDetectionSlice(allocator: Allocator, io: std.Io) ![]const u8 {
+    return runCommand(allocator, io, [_][]const u8{ "ddcutil", "detect", "--brief" });
 }
